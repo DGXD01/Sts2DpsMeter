@@ -145,6 +145,7 @@ public static class DpsAttribution
     {
         [typeof(BlackHolePower)] = typeof(BlackHole),
         [typeof(FlameBarrierPower)] = typeof(FlameBarrier),
+        [typeof(HailstormPower)] = typeof(Hailstorm),
         [typeof(HauntPower)] = typeof(Haunt),
         [typeof(InfernoPower)] = typeof(Inferno),
         [typeof(JuggernautPower)] = typeof(Juggernaut),
@@ -153,9 +154,11 @@ public static class DpsAttribution
         [typeof(OutbreakPower)] = typeof(Outbreak),
         [typeof(SerpentFormPower)] = typeof(SerpentForm),
         [typeof(SleightOfFleshPower)] = typeof(SleightOfFlesh),
+        [typeof(SmokestackPower)] = typeof(Smokestack),
         [typeof(SpeedsterPower)] = typeof(Speedster),
         [typeof(ReflectPower)] = typeof(Reflect),
-        [typeof(StranglePower)] = typeof(Strangle)
+        [typeof(StranglePower)] = typeof(Strangle),
+        [typeof(ThunderPower)] = typeof(Thunder)
     };
 
     public static DamageAttribution Resolve(
