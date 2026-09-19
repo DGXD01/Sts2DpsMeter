@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
@@ -89,6 +90,8 @@ public sealed record DamageAttribution(
 public static class DpsAttribution
 {
     private const string UnknownSource = "未知来源";
+    private static readonly object PowerOriginSyncRoot = new();
+    private static readonly ConditionalWeakTable<PowerModel, PowerOriginRecord> PowerOrigins = new();
 
     private static readonly HashSet<string> DamagePowerNames = new(StringComparer.Ordinal)
     {
@@ -113,6 +116,7 @@ public static class DpsAttribution
         "SleightOfFleshPower",
         "SmokestackPower",
         "SpeedsterPower",
+        "StranglePower",
         "TheBombPower",
         "ThornsPower",
         "ThunderPower"
@@ -129,12 +133,23 @@ public static class DpsAttribution
         ["ConstrictPower"] = "束缚/持续伤害"
     };
 
+    // 这些能力可能由多个不同卡牌、遗物或药水施加，不能静态绑定到单一卡牌。
+    private static readonly HashSet<string> AmbiguousPowerNames = new(StringComparer.Ordinal)
+    {
+        "ThornsPower"
+    };
+
+    // 只映射能够稳定确定唯一来源卡牌的能力。共享能力必须依赖运行时来源记录。
     private static readonly Dictionary<Type, Type> PowerOriginCardTypes = new()
     {
         [typeof(FlameBarrierPower)] = typeof(FlameBarrier),
         [typeof(InfernoPower)] = typeof(Inferno),
         [typeof(JuggernautPower)] = typeof(Juggernaut),
-        [typeof(CrimsonMantlePower)] = typeof(CrimsonMantle)
+        [typeof(CrimsonMantlePower)] = typeof(CrimsonMantle),
+        [typeof(OutbreakPower)] = typeof(Outbreak),
+        [typeof(SerpentFormPower)] = typeof(SerpentForm),
+        [typeof(SpeedsterPower)] = typeof(Speedster),
+        [typeof(StranglePower)] = typeof(Strangle)
     };
 
     public static DamageAttribution Resolve(
@@ -537,21 +552,79 @@ public static class DpsAttribution
 
     private static TriggerCardInfo? ResolvePowerOriginCardInfo(AbstractModel? directModel)
     {
-        if (directModel is null || !PowerOriginCardTypes.TryGetValue(directModel.GetType(), out var cardType))
+        if (directModel is not PowerModel power)
+        {
+            return null;
+        }
+
+        if (TryGetTrackedPowerOrigin(power, out var trackedOrigin))
+        {
+            return new TriggerCardInfo(trackedOrigin.DisplayName, trackedOrigin.InternalId);
+        }
+
+        if (!PowerOriginCardTypes.TryGetValue(power.GetType(), out var cardType))
         {
             return null;
         }
 
         try
         {
+            var originCard = ModelDb.GetById<CardModel>(ModelDb.GetId(cardType));
             return new TriggerCardInfo(
-                GetModelTitle(directModel),
-                ModelDb.GetId(cardType).ToString());
+                GetModelTitle(originCard),
+                GetModelInternalId(originCard));
         }
         catch
         {
             // 无法解析稳定卡牌 ID 时保留能力来源，不能影响伤害记录。
             return null;
+        }
+    }
+
+    public static void RecordPowerOrigin(PowerModel power, CardModel? cardSource)
+    {
+        var powerName = power.GetType().Name;
+        if (powerName == "PoisonPower"
+            || !DamagePowerNames.Contains(powerName)
+            || cardSource is null && !AmbiguousPowerNames.Contains(powerName))
+        {
+            return;
+        }
+
+        var snapshot = cardSource is null
+            ? null
+            : new PowerOriginSnapshot(GetModelTitle(cardSource), GetModelInternalId(cardSource));
+        lock (PowerOriginSyncRoot)
+        {
+            var record = PowerOrigins.GetValue(power, _ => new PowerOriginRecord());
+            if (snapshot is null)
+            {
+                record.RecordUnknownSource();
+            }
+            else
+            {
+                record.Record(snapshot);
+            }
+        }
+    }
+
+    private static bool TryGetTrackedPowerOrigin(PowerModel power, out PowerOriginSnapshot snapshot)
+    {
+        if (power.GetType().Name == "PoisonPower")
+        {
+            snapshot = null!;
+            return false;
+        }
+
+        lock (PowerOriginSyncRoot)
+        {
+            if (!PowerOrigins.TryGetValue(power, out var record))
+            {
+                snapshot = null!;
+                return false;
+            }
+
+            return record.TryGetUnambiguousSnapshot(out snapshot);
         }
     }
 
@@ -626,6 +699,48 @@ public static class DpsAttribution
     }
 
     private sealed record TriggerCardInfo(string DisplayName, string InternalId);
+    private sealed record PowerOriginSnapshot(string DisplayName, string InternalId);
+
+    private sealed class PowerOriginRecord
+    {
+        public PowerOriginSnapshot? Snapshot { get; private set; }
+
+        public bool HasMixedSources { get; private set; }
+
+        public bool HasUnknownSource { get; private set; }
+
+        public void RecordUnknownSource()
+        {
+            HasUnknownSource = true;
+        }
+
+        public void Record(PowerOriginSnapshot snapshot)
+        {
+            if (Snapshot is null)
+            {
+                Snapshot = snapshot;
+                return;
+            }
+
+            if (!string.Equals(Snapshot.InternalId, snapshot.InternalId, StringComparison.Ordinal))
+            {
+                HasMixedSources = true;
+            }
+        }
+
+        public bool TryGetUnambiguousSnapshot(out PowerOriginSnapshot snapshot)
+        {
+            if (!HasMixedSources && !HasUnknownSource && Snapshot is not null)
+            {
+                snapshot = Snapshot;
+                return true;
+            }
+
+            snapshot = null!;
+            return false;
+        }
+    }
+
     private static string? ResolveSemanticTag(
         AbstractModel directModel,
         IReadOnlyList<AbstractModel> chain,

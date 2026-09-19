@@ -17,6 +17,25 @@ public sealed class DpsHook : AbstractModel
         return ModelDb.GetById<DpsHook>(ModelDb.GetId<DpsHook>());
     }
 
+    public override Task AfterPowerAmountChanged(
+        PlayerChoiceContext choiceContext,
+        PowerModel power,
+        decimal amount,
+        Creature? applier,
+        CardModel? cardSource)
+    {
+        try
+        {
+            DpsAttribution.RecordPowerOrigin(power, cardSource);
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 记录状态来源失败：{exception}");
+        }
+
+        return Task.CompletedTask;
+    }
+
     public override Task AfterDamageGiven(
         PlayerChoiceContext choiceContext,
         Creature? dealer,
