@@ -14,6 +14,7 @@ public static class DpsMeterUi
     private const int ScopeTurn = 1;
     private const int ScopeTaken = 2;
     private const int ScopeTotal = 3;
+    private const int ScopeBoth = 4;
 
     private static readonly Color PanelBackground = new(0f, 0f, 0f, 0.92f);
     private static readonly Color PanelBorder = new(0.92f, 0.95f, 1f, 0.88f);
@@ -33,10 +34,13 @@ public static class DpsMeterUi
     private static Button? _previousPlayerButton;
     private static Button? _nextPlayerButton;
     private static OptionButton? _scopeOption;
+    private static Button? _collapseButton;
+    private static Control? _contentDivider;
     private static DpsMeterHost? _host;
     private static bool _visible = true;
     private static bool _visibilityInitialized;
     private static bool _dragging;
+    private static bool _contentCollapsed;
     private static int _selectedPlayerIndex;
     private static int _scopeIndex = ScopeCurrent;
     private static int _immediateRefreshRequested;
@@ -107,7 +111,9 @@ public static class DpsMeterUi
         if (!IsAlive(_panel) ||
             !IsAlive(_moduleGrid) ||
             !IsAlive(_header) ||
-            !IsAlive(_scopeOption))
+            !IsAlive(_scopeOption) ||
+            !IsAlive(_collapseButton) ||
+            !IsAlive(_contentDivider))
         {
             return;
         }
@@ -125,33 +131,57 @@ public static class DpsMeterUi
         _panel.PivotOffset = Vector2.Zero;
         ApplyPanelStyle(settings);
         NormalizeScopeSelection(settings);
+        _contentDivider!.Visible = !_contentCollapsed;
+        _moduleGrid!.Visible = !_contentCollapsed;
+        UpdateCollapseButton();
 
         var view = BuildDamageView(settings, snapshot);
         _header!.Text = view.Title;
         UpdateNavigationState(snapshot.Players.Count);
 
-        ClearChildren(_moduleGrid!);
         _moduleGrid!.Columns = 1;
+        if (_contentCollapsed)
+        {
+            EnsurePanelSize(settings);
+            QueueDeferredPanelFit();
+            return;
+        }
 
-        var rows = view.Rows
-            .Where(row => row.Damage > 0)
-            .OrderByDescending(row => row.Damage)
-            .ThenBy(row => row.Label, StringComparer.Ordinal)
-            .Take(settings.MaxRows)
-            .ToArray();
+        ClearChildren(_moduleGrid);
 
-        if (rows.Length == 0)
+        if (view.Sections.Count == 0)
         {
             AddDamageRow(settings, "暂无记录", 0, 0d);
         }
         else
         {
-            foreach (var row in rows)
+            foreach (var section in view.Sections)
             {
-                var percentage = view.Total > 0
-                    ? Math.Clamp(row.Damage / (double)view.Total * 100d, 0d, 100d)
-                    : 0d;
-                AddDamageRow(settings, row.Label, row.Damage, percentage);
+                if (!string.IsNullOrWhiteSpace(section.Heading))
+                {
+                    AddDamageSectionHeader(section.Heading);
+                }
+
+                var rows = section.Rows
+                    .Where(row => row.Damage > 0)
+                    .OrderByDescending(row => row.Damage)
+                    .ThenBy(row => row.Label, StringComparer.Ordinal)
+                    .Take(settings.MaxRows)
+                    .ToArray();
+
+                if (rows.Length == 0)
+                {
+                    AddDamageRow(settings, "暂无记录", 0, 0d);
+                    continue;
+                }
+
+                foreach (var row in rows)
+                {
+                    var percentage = section.Total > 0
+                        ? Math.Clamp(row.Damage / (double)section.Total * 100d, 0d, 100d)
+                        : 0d;
+                    AddDamageRow(settings, row.Label, row.Damage, percentage);
+                }
             }
         }
 
@@ -230,11 +260,26 @@ public static class DpsMeterUi
     {
         if (snapshot.Players.Count == 0)
         {
-            return new DamageViewData("伤害：0", 0, Array.Empty<DamageRowData>());
+            return new DamageViewData("伤害：0", Array.Empty<DamageSectionData>());
         }
 
         _selectedPlayerIndex = Math.Clamp(_selectedPlayerIndex, 0, snapshot.Players.Count - 1);
         var player = snapshot.Players[_selectedPlayerIndex];
+
+        if (_scopeIndex == ScopeBoth)
+        {
+            var dealtRows = BuildCurrentRows(player);
+            var takenRows = BuildTakenRows(player);
+            var dealtTotal = player.TotalDamage;
+            var takenTotal = player.IncomingDamage + player.SelfLossDamage;
+            var sections = new[]
+            {
+                new DamageSectionData("造成伤害", dealtTotal, dealtRows),
+                new DamageSectionData("受到伤害", takenTotal, takenRows)
+            };
+            return new DamageViewData($"造成：{dealtTotal} / 承伤：{takenTotal}", sections);
+        }
+
         var rows = _scopeIndex switch
         {
             ScopeTurn => BuildTurnRows(player),
@@ -252,7 +297,9 @@ public static class DpsMeterUi
         };
 
         var title = _scopeIndex == ScopeTaken ? $"受到：{total}" : $"伤害：{total}";
-        return new DamageViewData(title, total, rows);
+        return new DamageViewData(
+            title,
+            new[] { new DamageSectionData(null, total, rows) });
     }
 
     private static IReadOnlyList<DamageRowData> BuildCurrentRows(PlayerStatsSnapshot player)
@@ -383,6 +430,22 @@ public static class DpsMeterUi
         _moduleGrid!.AddChild(row);
     }
 
+    private static void AddDamageSectionHeader(string heading)
+    {
+        var label = new Label
+        {
+            Text = heading,
+            CustomMinimumSize = new Vector2(0, 20f),
+            VerticalAlignment = VerticalAlignment.Center,
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        label.AddThemeColorOverride("font_color", TitleBlue);
+        label.AddThemeColorOverride("font_outline_color", Colors.Black);
+        label.AddThemeConstantOverride("outline_size", 2);
+        label.AddThemeFontSizeOverride("font_size", 14);
+        _moduleGrid!.AddChild(label);
+    }
+
     private static StyleBoxFlat CreateBarStyle(Color color, int radius)
     {
         return new StyleBoxFlat
@@ -397,12 +460,22 @@ public static class DpsMeterUi
 
     private static void NormalizeScopeSelection(DpsMeterSettingsData settings)
     {
+        if (_scopeIndex == ScopeBoth &&
+            (!settings.ShowDealtBreakdown || !settings.ShowTakenBreakdown))
+        {
+            _scopeIndex = settings.ShowDealtBreakdown
+                ? ScopeCurrent
+                : settings.ShowTakenBreakdown ? ScopeTaken : ScopeCurrent;
+        }
+
         if (_scopeIndex == ScopeTaken && !settings.ShowTakenBreakdown)
         {
             _scopeIndex = ScopeCurrent;
         }
 
-        if (_scopeIndex != ScopeTaken && !settings.ShowDealtBreakdown)
+        if (_scopeIndex != ScopeTaken &&
+            _scopeIndex != ScopeBoth &&
+            !settings.ShowDealtBreakdown)
         {
             _scopeIndex = settings.ShowTakenBreakdown ? ScopeTaken : ScopeCurrent;
         }
@@ -412,6 +485,9 @@ public static class DpsMeterUi
         _scopeOption.SetItemDisabled(ScopeTurn, !settings.ShowDealtBreakdown);
         _scopeOption.SetItemDisabled(ScopeTaken, !settings.ShowTakenBreakdown);
         _scopeOption.SetItemDisabled(ScopeTotal, !settings.ShowDealtBreakdown);
+        _scopeOption.SetItemDisabled(
+            ScopeBoth,
+            !settings.ShowDealtBreakdown || !settings.ShowTakenBreakdown);
     }
 
     private static void UpdateNavigationState(int playerCount)
@@ -447,9 +523,26 @@ public static class DpsMeterUi
 
     private static void OnScopeSelected(long index)
     {
-        _scopeIndex = Math.Clamp((int)index, ScopeCurrent, ScopeTotal);
+        _scopeIndex = Math.Clamp((int)index, ScopeCurrent, ScopeBoth);
         _selectedPlayerIndex = 0;
         Refresh();
+    }
+
+    private static void OnCollapsePressed()
+    {
+        _contentCollapsed = !_contentCollapsed;
+        Refresh();
+    }
+
+    private static void UpdateCollapseButton()
+    {
+        if (!IsAlive(_collapseButton))
+        {
+            return;
+        }
+
+        _collapseButton!.Text = _contentCollapsed ? "+" : "−";
+        _collapseButton.TooltipText = _contentCollapsed ? "展开伤害明细" : "收起伤害明细";
     }
 
     private static void EnsurePanelSize(DpsMeterSettingsData settings)
@@ -608,6 +701,7 @@ public static class DpsMeterUi
         _scopeOption.AddItem("本回合");
         _scopeOption.AddItem("受到");
         _scopeOption.AddItem("总计");
+        _scopeOption.AddItem("同时");
         _scopeOption.Selected = ScopeCurrent;
         _scopeOption.ItemSelected += OnScopeSelected;
         _scopeOption.AddThemeColorOverride("font_color", PrimaryText);
@@ -615,13 +709,17 @@ public static class DpsMeterUi
         ApplyDropdownStyle(_scopeOption);
         headerRow.AddChild(_scopeOption);
 
-        var divider = new ColorRect
+        _collapseButton = CreateArrowButton(_contentCollapsed ? "+" : "−", OnCollapsePressed);
+        _collapseButton.TooltipText = _contentCollapsed ? "展开伤害明细" : "收起伤害明细";
+        headerRow.AddChild(_collapseButton);
+
+        _contentDivider = new ColorRect
         {
             Color = new Color(PanelBorder.R, PanelBorder.G, PanelBorder.B, 0.18f),
             CustomMinimumSize = new Vector2(0, 1),
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        layout.AddChild(divider);
+        layout.AddChild(_contentDivider);
 
         _moduleGrid = new GridContainer
         {
@@ -765,7 +863,14 @@ public static class DpsMeterUi
 
     private sealed record DamageRowData(string Label, long Damage);
 
-    private sealed record DamageViewData(string Title, long Total, IReadOnlyList<DamageRowData> Rows);
+    private sealed record DamageSectionData(
+        string? Heading,
+        long Total,
+        IReadOnlyList<DamageRowData> Rows);
+
+    private sealed record DamageViewData(
+        string Title,
+        IReadOnlyList<DamageSectionData> Sections);
 }
 
 internal sealed class DpsMeterHost : Node

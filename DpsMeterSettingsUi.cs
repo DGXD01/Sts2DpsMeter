@@ -110,7 +110,7 @@ public static class DpsMeterSettingsUi
 
         var introduction = new Label
         {
-            Text = "伤害发生后立即刷新。标题左右箭头切换玩家，右上角下拉框选择统计范围。",
+            Text = "伤害发生后立即刷新。标题左右箭头切换玩家，右上角下拉框选择统计范围或“同时”，最右侧 +/- 折叠明细。",
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
@@ -166,6 +166,7 @@ public static class DpsMeterSettingsUi
             settings.ShowTakenBreakdown = value;
             SaveAndRefresh();
         });
+        AddText("“玩家造成伤害”和“玩家受到伤害”都启用时，HUD 的“同时”选项会并列显示两段明细。", MutedColor, 11);
 
         AddSection("布局与密度");
         AddSliderRow("伤害来源显示行数", settings.MaxRows, 1, 12, 1, value =>
