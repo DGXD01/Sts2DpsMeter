@@ -45,6 +45,7 @@ public static class DpsSourceContext
             var popPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(PopModelPostfix));
             var powerFlashPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(PowerFlashPostfix));
             var relicFlashPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(RelicFlashPostfix));
+            var orbTriggerPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(OrbTriggerPostfix));
             var doomKillPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(DoomKillPrefix));
             var doomKillMethod = AccessTools.Method(
                 typeof(DoomPower),
@@ -66,6 +67,11 @@ public static class DpsSourceContext
                     new[] { typeof(IEnumerable<Creature>) }),
                 relicFlashPostfix,
                 "RelicModel.Flash(IEnumerable<Creature>)");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(typeof(OrbModel), nameof(OrbModel.Trigger), Type.EmptyTypes),
+                orbTriggerPostfix,
+                "OrbModel.Trigger");
             PatchRequiredPrefix(
                 harmony,
                 doomKillMethod,
@@ -152,6 +158,11 @@ public static class DpsSourceContext
     }
 
     private static void RelicFlashPostfix(RelicModel __instance)
+    {
+        RecordRecentModel(__instance);
+    }
+
+    private static void OrbTriggerPostfix(OrbModel __instance)
     {
         RecordRecentModel(__instance);
     }

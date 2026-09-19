@@ -34,7 +34,7 @@
 - 已补充静默猎手单人卡牌的静态伤害路径覆盖：88 张卡牌中 27 张直接伤害卡，Shiv 独立统计，中毒来源暂为 `Deferred`，Abrasive/Outbreak/SerpentForm/Speedster/Strangle 的能力伤害按对应规则归因；详见 [docs/静默猎手伤害覆盖.md](docs/静默猎手伤害覆盖.md)。
 - 已补充储君单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 32 张直接伤害卡、`SovereignBlade` / `MinionStrike` / `MinionDiveBomb` 派生统计，以及 `BlackHolePower` / `ReflectPower` 两条能力间接伤害；详见 [docs/储君伤害覆盖.md](docs/储君伤害覆盖.md)。
 - 已补充亡魂契约师单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 24 张直接伤害卡、12 张 Osty 攻击卡和 `SweepingGaze` Token，补充 `HauntPower` / `NecroMasteryPower` / `SleightOfFleshPower` 三条唯一来源映射，并新增灾厄击杀统计：仅当灾厄层数达到敌方当前生命值且实际触发击杀时，按击杀前 HP 记入 Mod 统计，不修改游戏战斗数值；详见 [docs/亡魂契约师伤害覆盖.md](docs/亡魂契约师伤害覆盖.md)。
-- 已补充故障机器人单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 29 张直接伤害卡、20 张通道卡、4 张激发卡和 Lightning / Dark / Glass 充能球伤害，并补充 `HailstormPower` / `SmokestackPower` / `ThunderPower` 三条能力间接伤害映射；详见 [docs/故障机器人伤害覆盖.md](docs/故障机器人伤害覆盖.md)。
+- 已补充故障机器人单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 29 张直接伤害卡、20 张通道卡、4 张激发卡和 Lightning / Dark / Glass 充能球伤害，并补充 `HailstormPower` / `SmokestackPower` / `ThunderPower` 三条能力间接伤害映射；充能球被动通过 `OrbModel.Trigger()` 归因到实际球体，详见 [docs/故障机器人伤害覆盖.md](docs/故障机器人伤害覆盖.md)。
 - HUD 不使用键盘热键；所有交互控件禁用键盘焦点并仅响应鼠标，点击标题栏的“设”按钮打开或关闭设置面板，未锁定时可拖动 HUD 并保存位置。
 - HUD 支持 `50%` 至 `200%` 缩放，只通过设置面板中的“界面缩放”滑块调整，不使用鼠标滚轮组合键。
 - 每次伤害事件被成功归类后立即请求刷新：主线程直接刷新，后台线程安全投递到 Godot 主线程；同一帧内的连锁伤害合并为一次刷新。
