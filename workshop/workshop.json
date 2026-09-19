@@ -1,8 +1,8 @@
 {
-  "title": "Sts2 DPS Meter",
-  "description": "统计战斗总伤害、战斗时长、DPS 和每回合伤害，并按卡牌或宠物来源汇总；战斗中按 F8 显示或隐藏面板。",
+  "title": "Sts2 DPS Meter - 铁甲战士测试版",
+  "description": "铁甲战士伤害统计测试版。支持按回合、卡牌名、伤害来源和机制查看输出，并统计自身造成的伤害、承伤与自损。HUD 采用可拼接模块，玩家可在 F7 设置面板中自行选择显示内容、列数、行数、回合数、透明度和缩放。",
   "visibility": "private",
-  "changeNote": "实现基础 DPS 面板、回合伤害和战斗结束日志，待游戏内运行验证。",
+  "changeNote": "0.2.0：新增 rDPS 风格玩家排行、拼接式模块 HUD 和 F7 自定义设置；完善卡牌、机制、逐回合、承伤与自损展示。",
   "tags": ["Tools & APIs"],
   "dependencies": [],
   "contentDescriptors": []

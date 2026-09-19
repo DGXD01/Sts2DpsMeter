@@ -92,6 +92,8 @@ $requiredPaths = @(
     (Join-Path $repoRoot 'DpsSourceContext.cs'),
     (Join-Path $repoRoot 'DpsStats.cs'),
     (Join-Path $repoRoot 'DpsModels.cs'),
+    (Join-Path $repoRoot 'DpsMeterSettings.cs'),
+    (Join-Path $repoRoot 'DpsMeterSettingsUi.cs'),
     (Join-Path $repoRoot 'DpsMeterUi.cs'),
     (Join-Path $repoRoot 'manifest.json'),
     (Join-Path $repoRoot 'docs\开发与更新流程.md')

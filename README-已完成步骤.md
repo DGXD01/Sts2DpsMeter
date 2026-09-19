@@ -12,7 +12,7 @@
 | 初始 `main` | 已建立并推送，提交为 `0669372 chore(Sts2DpsMeter)：初始化仓库` |
 | 功能分支 | `feature/DpsMeterCore` |
 | 目标游戏版本 | `0.107.1` |
-| 当前 Mod 版本 | `0.1.0` |
+| 当前 Mod 版本 | `0.2.0` 铁甲战士测试版 |
 | 真实游戏程序集编译 | 已通过，Release、0 警告、0 错误 |
 | 游戏内运行验证 | 尚未完成 |
 | Steam 创意工坊上传 | 尚未执行 |
@@ -32,9 +32,9 @@ C:\Users\lenovo\Documents\Codex\2026-09-19\new-chat\outputs\Sts2DpsMeter
 
 ## 二、已完成的步骤
 
-### 1. 参考资料分析
+### 1. 参考资料与独立实现
 
-- 已参考《杀戮尖塔2》多人伤害统计 Mod，确认 Mod 初始化、战斗 Hook 和伤害事件的实际接入方式。
+- 已参考公开的《杀戮尖塔2》伤害统计 Mod 和 Steam 创意工坊 `rDPS Meter` 的信息层级，确认排行、伤害拆分和战斗内 HUD 的目标形态。
 - 新项目采用独立实现，没有复制参考 Mod 的 DLL、反编译源码、图片或本地化资源。
 
 ### 2. GitHub 仓库与变更控制
@@ -55,7 +55,9 @@ C:\Users\lenovo\Documents\Codex\2026-09-19\new-chat\outputs\Sts2DpsMeter
 | `DpsSourceContext.cs` | Harmony 模型上下文栈、最近状态/遗物模型追踪 |
 | `DpsStats.cs` | 线程安全统计、玩家和宠物归因、DPS、DPT、回合伤害和来源统计 |
 | `DpsModels.cs` | UI 与日志使用的只读统计快照模型 |
-| `DpsMeterUi.cs` | Godot 游戏内面板，支持 `F8` 显示或隐藏 |
+| `DpsMeterSettings.cs` | 设置数据、推荐值、`settings.json` 读写和规范化 |
+| `DpsMeterSettingsUi.cs` | `F7` 设置面板、模块开关、布局参数和恢复推荐值 |
+| `DpsMeterUi.cs` | rDPS 风格排行、拼接式 HUD、拖动位置和 `F8` 显示开关 |
 | `Sts2DpsMeter.csproj` | .NET 9、x64、真实游戏程序集引用和版本配置 |
 | `manifest.json` | Mod ID、版本、游戏版本、DLL 和依赖声明 |
 
@@ -72,27 +74,46 @@ C:\Users\lenovo\Documents\Codex\2026-09-19\new-chat\outputs\Sts2DpsMeter
 - 分别记录输出、承伤和自损，避免把敌方施加的状态伤害误算为玩家输出。
 - 通过模型上下文栈、最近模型、`cardSource` 和 `PowerModel.Applier` 回退识别来源。
 - 覆盖卡牌、状态、遗物、药水、充能球、宠物、敌方和事件来源。
+- 按稳定卡牌 ID 聚合卡牌伤害，同名卡牌合并为一个统计类型。
 - 显示中毒、火焰、闪电、束缚、反伤、充能球被动/激发等语义标签。
+- 中毒归入独立机制并预留施毒来源字段；当前不追踪具体施毒者。
 - 显示总伤害、有效掉血、格挡、未格挡、过量、命中次数、最高单次、DPS 和 DPT。
 - 显示每个回合的伤害、承伤和自损来源。
-- 战斗中按 `F8` 显示或隐藏统计面板。
+- HUD 支持 1 至 3 列拼接模块，并可选择排行、概要、核心指标、拆分、来源、回合、卡牌、机制、承伤和自损。
+- `F7` 打开设置，`F8` 显示或隐藏 HUD；未锁定时可拖动并保存位置。
 - 战斗结束时在 Godot 日志中输出本场汇总。
 - 游戏暂停时停止累计战斗时间。
 
-### 4. 构建、校验与更新流程
+### 4. 构建、校验与创意工坊打包
 
 | 文件 | 已完成内容 |
 | --- | --- |
-| `scripts/validate-repo.ps1` | 校验清单、版本、封面、PowerShell 脚本和禁止提交的文件 |
-| `scripts/build-and-stage.ps1` | 自动查找游戏目录、Release 编译并暂存 Steam 上传内容 |
+| `scripts/validate-repo.ps1` | 校验清单、版本、新增源码文件、封面、PowerShell 脚本和禁止提交的文件 |
+| `scripts/build-and-stage.ps1` | 自动查找游戏目录、Release 编译、暂存上传内容并生成 ZIP |
 | `.github/workflows/validate.yml` | 在 `main` 推送和 PR 上运行静态仓库校验 |
 | `.github/pull_request_template.md` | 中文 PR 验证、风险和审查模板 |
 | `.github/CODEOWNERS` | 指定仓库所有者审查 |
 | `docs/开发与更新流程.md` | 分支、merge、版本、GitHub 和 Steam 上传流程 |
 | `docs/技术债.md` | 记录运行验证和后续技术债 |
-| `CHANGELOG.md` | 记录 `0.1.0` 的已完成项和待验证项 |
+| `CHANGELOG.md` | 记录 `0.2.0` 的已完成项和待验证项 |
 | `workshop/workshop.json` | Steam 创意工坊标题、描述、私有可见性和标签 |
 | `workshop/image.png` | 小于 1 MB 的占位封面，正式上传前需要替换 |
+
+当前 ZIP：
+
+```text
+artifacts\workshop\Sts2DpsMeter-Ironclad-Test-0.2.0.zip
+```
+
+ZIP 根目录：
+
+```text
+content/Sts2DpsMeter.dll
+content/manifest.json
+workshop.json
+image.png
+README.md
+```
 
 ### 5. 本机验证结果
 
@@ -107,23 +128,24 @@ E:\STEAM\steam\steamapps\common\Slay the Spire 2
 | 检查 | 结果 |
 | --- | --- |
 | `dotnet format --verify-no-changes --no-restore` | 通过 |
-| `scripts/validate-repo.ps1` | 通过，Mod 版本 `0.1.0` |
+| `scripts/validate-repo.ps1` | 通过，Mod 版本 `0.2.0` |
 | `dotnet build -c Release -warnaserror` | 成功，0 警告、0 错误 |
-| `scripts/build-and-stage.ps1 -Configuration Release -SkipStage` | 成功，0 警告、0 错误 |
+| `scripts/build-and-stage.ps1 -Configuration Release` | 成功，生成创意工坊 ZIP |
 
 验证产物：
 
 ```text
 artifacts\build\Sts2DpsMeter.dll
+artifacts\workshop\Sts2DpsMeter-Ironclad-Test-0.2.0.zip
 ```
 
-该目录已加入 `.gitignore`，不会提交到 GitHub。
+`artifacts/` 已加入 `.gitignore`，不会提交到 GitHub。
 
 ## 三、当前 Git 流程
 
 - `main`：仅包含初始提交，尚未合并功能代码。
 - `feature/DpsMeterCore`：包含本阶段 DPS Mod 实现和文档。
-- 本次只提交并推送功能分支，不创建 PR，也不修改 `main`。
+- 本次只操作功能分支，不创建 PR，也不修改 `main`。
 - 后续需要合并时，必须另行授权创建和合并 PR。
 
 ## 四、尚未完成的事项
@@ -131,9 +153,11 @@ artifacts\build\Sts2DpsMeter.dll
 | 优先级 | 事项 | 退出标准 |
 | --- | --- | --- |
 | P0 | 游戏内运行验证 | 单人和多人战斗各至少验证一场，确认面板、伤害、耗时和日志正确 |
-| P1 | 间接伤害运行态归因 | 覆盖毒伤、末日、反伤、敌方施加状态等间接伤害 |
+| P0 | UI 交互验证 | 验证 `F7`、`F8`、模块切换、拖动、缩放和位置保存 |
+| P1 | 间接伤害运行态归因 | 覆盖中毒、末日、反伤、敌方施加状态等间接伤害 |
+| P1 | 中毒来源追踪 | 在预留字段中记录具体施毒者并区分玩家/敌人来源 |
 | P1 | 游戏版本兼容性 | 确认 `min_game_version` 和实际可运行版本范围 |
-| P1 | 拼接式自定义 UI | 将固定列表拆分为可拖拽、可缩放和可配置的拼接模块 |
+| P1 | 性能检查 | 确认 0.25 秒 HUD 重建不会造成明显卡顿或拖动抖动 |
 | P1 | 许可证 | 公开发布前确定 LICENSE |
 | P2 | 创意工坊封面 | 用正式 PNG 替换占位图，且小于 1 MB |
 | P2 | Steam 首次上传 | 使用官方上传器完成私有测试上传 |
@@ -142,11 +166,12 @@ artifacts\build\Sts2DpsMeter.dll
 
 ## 五、后续建议步骤
 
-1. 将 `workshop\content\Sts2DpsMeter.dll` 和 `manifest.json` 放入游戏 Mod 加载目录进行运行测试。
+1. 将 ZIP 解压到官方上传器工作区，或把 `workshop\content\` 和 `workshop.json` 放入上传器目录进行运行测试。
 2. 记录游戏版本、角色、模式和日志中的 `[Sts2DpsMeter]` 输出。
-3. 根据运行结果修复 UI 布局、事件时序或伤害归因问题。
-4. 修复完成并重新验证后，再创建中文 PR，审查并合并到 `main`。
-5. 合并后替换正式封面、确定许可证，并执行 Steam 私有上传测试。
-6. 首次上传后保存并提交 `mod_id.txt`，再执行后续更新验证。
+3. 验证 HUD、排行、设置、拖拽和逐回合数据，并记录截图和异常。
+4. 根据运行结果修复 UI 布局、事件时序或伤害归因问题。
+5. 修复完成并重新验证后，再创建中文 PR，审查并合并到 `main`。
+6. 合并后替换正式封面、确定许可证，并执行 Steam 私有上传测试。
+7. 首次上传后保存并提交 `mod_id.txt`，再执行后续更新验证。
 
-> 当前状态是“已实现并通过真实程序集编译，但尚未经过游戏内运行验证”，不能把 `0.1.0` 标记为稳定发布版。
+> 当前状态是“已实现并通过真实程序集编译和创意工坊打包，但尚未经过游戏内运行验证”，不能把 `0.2.0` 标记为稳定发布版。

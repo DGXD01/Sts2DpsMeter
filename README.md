@@ -8,6 +8,7 @@
 | --- | --- |
 | GitHub 仓库 | 已创建，私有 |
 | 当前开发分支 | `feature/DpsMeterCore` |
+| 当前 Mod 版本 | `0.2.0` 铁甲战士测试版 |
 | 目标游戏版本 | `0.107.1` |
 | 真实游戏程序集编译 | 已通过：Release、0 警告、0 错误 |
 | 游戏内运行 | 未验证 |
@@ -24,12 +25,32 @@
 - 通过伤害 Hook、模型上下文栈、最近模型和伤害来源状态回退，识别卡牌、状态、遗物、药水、充能球、宠物、敌方和事件来源。
 - 支持中毒、火焰、闪电、束缚、反伤、充能球被动/激发等效果的语义标签。
 - 连锁伤害优先归因实际直接来源，并将触发卡牌作为二级信息。
-- 显示总伤害、命中次数、最高单次伤害、DPS、DPT 和每回合伤害。
-- 战斗期间显示 Godot 面板，按 `F8` 显示或隐藏。
+- 提供 rDPS 风格的玩家排行，显示排名、玩家名、相对伤害条、总伤害和占比。
+- HUD 采用可拼接模块，可将战斗概要、核心指标、伤害拆分、输出来源、逐回合、卡牌、机制、承伤和自损等模块按 1 至 3 列组合。
+- 卡牌伤害按稳定卡牌 ID 聚合，同名卡牌合并为一个统计类型；中毒作为独立机制统计，并预留施毒来源字段。
+- 按 `F7` 打开设置面板，按 `F8` 显示或隐藏 HUD；未锁定时可拖动 HUD 并保存位置。
 - 战斗结束时向 Godot 日志输出输出、承伤和自损明细。
 - 暂停游戏时停止累计 DPS 计时。
 
 当前不会修改战斗数值、卡牌、敌人或存档。部分没有稳定模型上下文的间接伤害仍会标记为推断或未知，需要运行态验证。
+
+## 界面与设置
+
+设置文件保存到：
+
+```text
+OS.GetUserDataDir()/Sts2DpsMeter/settings.json
+```
+
+可在 `F7` 设置面板中调整：
+
+- 启动时显示 HUD、位置锁定和紧凑模式；
+- 每个统计模块是否显示；
+- 面板列数、排行/来源行数和逐回合显示数量；
+- 面板透明度、界面缩放；
+- HUD 位置重置和全部推荐值恢复。
+
+推荐默认值为全部主要模块开启、两列、最多 5 行、最多 8 回合、透明度 `0.92`、缩放 `1.0`。
 
 ## 目录结构
 
@@ -46,12 +67,14 @@
 │   ├── build-and-stage.ps1
 │   └── validate-repo.ps1
 ├── workshop/
-│   ├── content/                 # 上传器实际打包的 DLL/JSON
 │   ├── image.png                # 上传封面占位图，发布前替换
+│   ├── README.md                # 会随 ZIP 一起提供
 │   └── workshop.json
 ├── DpsAttribution.cs            # 伤害来源识别、分类和置信度
 ├── DpsHook.cs                   # 战斗 Hook 接入
-├── DpsMeterUi.cs                # Godot DPS 面板和 F8 开关
+├── DpsMeterSettings.cs          # 设置数据、推荐值和持久化
+├── DpsMeterSettingsUi.cs        # F7 原生设置面板
+├── DpsMeterUi.cs                # 拼接式 HUD、排行和 F8 开关
 ├── DpsModels.cs                 # 快照模型
 ├── DpsSourceContext.cs          # 模型上下文栈和最近来源追踪
 ├── DpsStats.cs                  # 线程安全统计计算
@@ -89,7 +112,7 @@ $env:STS2_GAME_DIR = 'E:\STEAM\steam\steamapps\common\Slay the Spire 2'
 E:\STEAM\steam\steamapps\common\Slay the Spire 2
 ```
 
-## 本地验证
+## 本地验证与打包
 
 先执行静态校验：
 
@@ -97,16 +120,17 @@ E:\STEAM\steam\steamapps\common\Slay the Spire 2
 pwsh -NoProfile -File .\scripts\validate-repo.ps1
 ```
 
-校验通过后执行 Release 构建并暂存到 Steam 工作区：
+校验通过后执行 Release 构建、暂存和 ZIP 打包：
 
 ```powershell
-pwsh -NoProfile -File .\scripts\build-and-stage.ps1
+pwsh -NoProfile -File .\scripts\build-and-stage.ps1 -GameDir 'E:\steam\steam\steamapps\common\Slay the Spire 2'
 ```
 
-只构建、不暂存：
+只构建、不暂存或只跳过 ZIP：
 
 ```powershell
 pwsh -NoProfile -File .\scripts\build-and-stage.ps1 -SkipStage
+pwsh -NoProfile -File .\scripts\build-and-stage.ps1 -SkipArchive
 ```
 
 脚本会：
@@ -115,11 +139,31 @@ pwsh -NoProfile -File .\scripts\build-and-stage.ps1 -SkipStage
 2. 检查游戏程序集是否存在；
 3. 运行 `dotnet build`；
 4. 将 `Sts2DpsMeter.dll` 和 `manifest.json` 复制到 `workshop/content/`；
-5. 检查封面是否为小于 1 MB 的 PNG。
+5. 检查封面是否为小于 1 MB 的 PNG；
+6. 生成创意工坊 ZIP，并检查必需条目和禁止文件。
+
+当前产物：
+
+```text
+artifacts/build/Sts2DpsMeter.dll
+artifacts/workshop/Sts2DpsMeter-Ironclad-Test-0.2.0.zip
+```
+
+ZIP 根目录结构：
+
+```text
+content/Sts2DpsMeter.dll
+content/manifest.json
+workshop.json
+image.png
+README.md
+```
+
+`artifacts/` 已加入 `.gitignore`，不会提交到 GitHub。
 
 ## 版本与更新规则
 
-- Mod 版本使用三段式语义化版本，例如 `0.1.0`。
+- Mod 版本使用三段式语义化版本，例如 `0.2.0`。
 - `manifest.json` 的 `version` 与项目文件 `<Version>` 必须一致。
 - 每次发布前更新 `CHANGELOG.md`。
 - 首次 Steam 上传后，上传器生成的 `mod_id.txt` 必须保留并提交，后续更新依靠它定位已有创意工坊条目。
@@ -132,9 +176,10 @@ pwsh -NoProfile -File .\scripts\build-and-stage.ps1 -SkipStage
 
 - 尚未在游戏内完成单人和多人战斗验证，面板布局和事件时序仍可能调整。
 - `AfterDamageGiven`、`DamageResult`、事件签名已用 `0.107.1` 的 `sts2.dll` 编译验证，但还需要运行态验证。
-- 已实现模型栈、最近模型和 `PowerModel.Applier` 回退，但毒伤、末日、反伤和敌方施加状态仍需要按真实战斗日志核对。
-- 当前 UI 仍是固定纵向列表，尚未实现用户期望的拼接式、可拖拽和高度自定义布局。
-- 当前没有独立的战斗结算弹窗、历史战斗对比和配置界面。
+- 已实现模型栈、最近模型和 `PowerModel.Applier` 回退，但中毒、末日、反伤和敌方施加状态仍需要按真实战斗日志核对。
+- 中毒当前只按独立机制统计，具体施毒来源保留为 `Deferred`，尚未标记施毒者。
+- HUD 当前以 0.25 秒周期重建统计模块，长时间战斗需要观察性能和拖动手感。
+- 尚未实现多场战斗历史对比和独立结算弹窗。
 - `workshop/image.png` 仍是占位图，正式上传前必须替换。
 - `min_game_version` 当前记录为 `0.107.1`，兼容性范围仍待测试。
 - 仓库目前没有 `LICENSE`；没有明确许可证前不要公开分发。
@@ -142,9 +187,12 @@ pwsh -NoProfile -File .\scripts\build-and-stage.ps1 -SkipStage
 ## 发布前检查
 
 - [x] 在目标游戏版本上编译通过
+- [x] 生成可上传 Steam 创意工坊的 ZIP
 - [ ] 在单人和多人战斗中各跑至少一局
 - [ ] 检查日志中的伤害、耗时和 DPS 是否合理
+- [ ] 验证 F7 设置、F8 开关、模块切换、拖拽和位置保存
 - [ ] 确认没有修改游戏存档或破坏原版逻辑
+- [ ] 替换正式创意工坊封面
 - [ ] 同步更新版本号、清单、更新日志和创意工坊说明
 - [ ] 首次上传后提交 `mod_id.txt`
 - [ ] 将 `workshop.json` 的 `visibility` 从 `private` 改为目标可见性

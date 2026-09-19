@@ -1,9 +1,9 @@
 {
   "id": "Sts2DpsMeter",
-  "name": "Sts2 DPS Meter",
+  "name": "Sts2 DPS Meter - 铁甲战士测试版",
   "author": "DGXD",
-  "description": "统计战斗总伤害、战斗时长、DPS 和每回合伤害，并按卡牌或宠物来源汇总；战斗中按 F8 显示或隐藏面板。",
-  "version": "0.1.0",
+  "description": "铁甲战士伤害统计测试版：按回合、卡牌名、伤害来源和机制汇总输出，并统计承伤与自损。按 F7 自定义拼接面板，按 F8 显示或隐藏。",
+  "version": "0.2.0",
   "min_game_version": "0.107.1",
   "has_pck": false,
   "has_dll": true,
