@@ -8,28 +8,37 @@ namespace Sts2DpsMeter;
 
 public static class DpsMeterUi
 {
-    private const float MinimumPanelWidth = 320f;
+    private const float MinimumPanelWidth = 360f;
     private const float MinimumPanelHeight = 1f;
+    private const int ScopeCurrent = 0;
+    private const int ScopeTurn = 1;
+    private const int ScopeTaken = 2;
+    private const int ScopeTotal = 3;
 
-    private static readonly Color PanelBackground = new(0.035f, 0.045f, 0.07f, 0.92f);
-    private static readonly Color PanelBorder = new(0.25f, 0.65f, 0.95f, 0.95f);
-    private static readonly Color AccentCyan = new(0.42f, 0.86f, 1f);
-    private static readonly Color AccentGreen = new(0.48f, 0.92f, 0.62f);
-    private static readonly Color AccentOrange = new(1f, 0.67f, 0.32f);
-    private static readonly Color AccentRed = new(1f, 0.44f, 0.48f);
-    private static readonly Color AccentPurple = new(0.78f, 0.58f, 1f);
-    private static readonly Color MutedText = new(0.68f, 0.74f, 0.82f);
-    private static readonly Color PrimaryText = new(0.91f, 0.95f, 1f);
+    private static readonly Color PanelBackground = new(0f, 0f, 0f, 0.92f);
+    private static readonly Color PanelBorder = new(0.92f, 0.95f, 1f, 0.88f);
+    private static readonly Color TitleBlue = new(0.2f, 0.6f, 1f);
+    private static readonly Color ArrowBlue = new(0.18f, 0.54f, 1f);
+    private static readonly Color BarBackground = new(0.11f, 0.12f, 0.145f, 0.96f);
+    private static readonly Color BarFill = new(0.82f, 0.08f, 0.1f, 1f);
+    private static readonly Color DropdownBackground = new(0.06f, 0.065f, 0.08f, 0.98f);
+    private static readonly Color PrimaryText = new(0.98f, 0.99f, 1f);
+    private static readonly Color MutedText = new(0.68f, 0.72f, 0.78f);
 
     private static CanvasLayer? _canvas;
     private static PanelContainer? _panel;
     private static StyleBoxFlat? _panelStyle;
     private static GridContainer? _moduleGrid;
     private static Label? _header;
+    private static Button? _previousPlayerButton;
+    private static Button? _nextPlayerButton;
+    private static OptionButton? _scopeOption;
     private static DpsMeterHost? _host;
     private static bool _visible = true;
     private static bool _visibilityInitialized;
     private static bool _dragging;
+    private static int _selectedPlayerIndex;
+    private static int _scopeIndex = ScopeCurrent;
     private static int _immediateRefreshRequested;
     private static int _deferredRefreshQueued;
     private static int _deferredPanelFitQueued;
@@ -95,7 +104,10 @@ public static class DpsMeterUi
 
     public static void Refresh()
     {
-        if (!IsAlive(_panel) || !IsAlive(_moduleGrid) || !IsAlive(_header))
+        if (!IsAlive(_panel) ||
+            !IsAlive(_moduleGrid) ||
+            !IsAlive(_header) ||
+            !IsAlive(_scopeOption))
         {
             return;
         }
@@ -111,19 +123,36 @@ public static class DpsMeterUi
 
         _panel.Scale = new Vector2(settings.UiScale, settings.UiScale);
         _panel.PivotOffset = Vector2.Zero;
-        _header!.Text = BuildHeader(settings);
         ApplyPanelStyle(settings);
+        NormalizeScopeSelection(settings);
+
+        var view = BuildDamageView(settings, snapshot);
+        _header!.Text = view.Title;
+        UpdateNavigationState(snapshot.Players.Count);
 
         ClearChildren(_moduleGrid!);
-        _moduleGrid!.Columns = settings.Columns;
+        _moduleGrid!.Columns = 1;
 
-        if (snapshot.Players.Count == 0)
+        var rows = view.Rows
+            .Where(row => row.Damage > 0)
+            .OrderByDescending(row => row.Damage)
+            .ThenBy(row => row.Label, StringComparer.Ordinal)
+            .Take(settings.MaxRows)
+            .ToArray();
+
+        if (rows.Length == 0)
         {
-            AddEmptyState(settings);
+            AddDamageRow(settings, "暂无记录", 0, 0d);
         }
         else
         {
-            AddModules(settings, snapshot);
+            foreach (var row in rows)
+            {
+                var percentage = view.Total > 0
+                    ? Math.Clamp(row.Damage / (double)view.Total * 100d, 0d, 100d)
+                    : 0d;
+                AddDamageRow(settings, row.Label, row.Damage, percentage);
+            }
         }
 
         EnsurePanelSize(settings);
@@ -195,233 +224,232 @@ public static class DpsMeterUi
         DpsMeterSettingsUi.ToggleVisibility();
     }
 
-    private static string BuildHeader(DpsMeterSettingsData settings)
+    private static DamageViewData BuildDamageView(
+        DpsMeterSettingsData settings,
+        CombatStatsSnapshot snapshot)
     {
-        var hint = settings.LockPosition ? "位置已锁定" : "可拖动";
-        var scalePercent = Mathf.RoundToInt(settings.UiScale * 100f);
-        return $"Sts2 DPS  |  {hint}  |  缩放 {scalePercent}%  |  Ctrl+滚轮  |  F7 设置  F8 开关";
-    }
-
-    private static void AddEmptyState(DpsMeterSettingsData settings)
-    {
-        var panel = CreateModule("等待伤害数据", AccentCyan, settings.CompactMode ? 260 : 310);
-        AddTextLine(panel, "战斗开始后，这里会按你选择的模块显示伤害统计。", MutedText);
-        _moduleGrid!.AddChild(panel.GetParent());
-    }
-
-    private static void AddModules(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        if (settings.ShowDealtBreakdown)
+        if (snapshot.Players.Count == 0)
         {
-            AddDealtBreakdownModule(settings, snapshot);
+            return new DamageViewData("伤害：0", 0, Array.Empty<DamageRowData>());
         }
 
-        if (settings.ShowTakenBreakdown)
+        _selectedPlayerIndex = Math.Clamp(_selectedPlayerIndex, 0, snapshot.Players.Count - 1);
+        var player = snapshot.Players[_selectedPlayerIndex];
+        var rows = _scopeIndex switch
         {
-            AddTakenBreakdownModule(settings, snapshot);
-        }
+            ScopeTurn => BuildTurnRows(player),
+            ScopeTaken => BuildTakenRows(player),
+            ScopeTotal => BuildTotalRows(snapshot),
+            _ => BuildCurrentRows(player)
+        };
+
+        var total = _scopeIndex switch
+        {
+            ScopeTurn => rows.Sum(row => row.Damage),
+            ScopeTaken => player.IncomingDamage + player.SelfLossDamage,
+            ScopeTotal => snapshot.Players.Sum(item => item.TotalDamage),
+            _ => player.TotalDamage
+        };
+
+        var title = _scopeIndex == ScopeTaken ? $"受到：{total}" : $"伤害：{total}";
+        return new DamageViewData(title, total, rows);
     }
 
-    private static void AddDealtBreakdownModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
+    private static IReadOnlyList<DamageRowData> BuildCurrentRows(PlayerStatsSnapshot player)
     {
-        var body = CreateModule("玩家造成伤害", AccentCyan, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players)
-        {
-            AddSubHeader(body, player.DisplayName, AccentCyan);
-            AddKeyValueLine(body, "总伤害（含格挡）", $"{player.TotalDamage}（{player.HitCount} 次）");
-            AddKeyValueLine(body, "格挡吸收", player.BlockedDamage.ToString(), AccentOrange);
-            AddKeyValueLine(body, "生命伤害", player.UnblockedDamage.ToString(), AccentGreen);
-            AddKeyValueLine(body, "过量伤害", player.OverkillDamage.ToString(), AccentOrange);
-            AddTextLine(body, "按来源划分", MutedText, 11);
-
-            var sources = player.Sources.Take(settings.MaxRows).ToArray();
-            if (sources.Length == 0)
-            {
-                AddTextLine(body, "暂无伤害来源。", MutedText);
-                continue;
-            }
-
-            foreach (var source in sources)
-            {
-                AddKeyValueLine(
-                    body,
-                    $"{FormatSource(source)}（{source.Hits} 次）",
-                    source.Damage.ToString(),
-                    AccentCyan);
-            }
-        }
-
-        AddModuleToGrid(body);
+        return player.Sources
+            .Select(source => new DamageRowData(source.Source, source.Damage))
+            .ToArray();
     }
 
-    private static void AddTakenBreakdownModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
+    private static IReadOnlyList<DamageRowData> BuildTurnRows(PlayerStatsSnapshot player)
     {
-        var body = CreateModule("玩家受到伤害", AccentRed, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players)
+        var currentTurn = player.Turns
+            .OrderByDescending(turn => turn.Turn)
+            .FirstOrDefault();
+
+        if (currentTurn is null)
         {
-            var sources = player.IncomingSources
-                .Concat(player.SelfLossSources)
-                .OrderByDescending(source => source.Damage)
-                .ThenBy(source => source.Source)
-                .ToArray();
-            var blockedDamage = sources.Sum(source => source.BlockedDamage);
-            var unblockedDamage = sources.Sum(source => source.UnblockedDamage);
-            var overkillDamage = sources.Sum(source => source.OverkillDamage);
-            var totalDamage = player.IncomingDamage + player.SelfLossDamage;
-            var totalHits = player.IncomingHits + player.SelfLossHits;
-
-            AddSubHeader(body, player.DisplayName, AccentRed);
-            AddKeyValueLine(body, "总受到伤害（含格挡）", $"{totalDamage}（{totalHits} 次）", AccentRed);
-            AddKeyValueLine(body, "敌方造成", player.IncomingDamage.ToString(), AccentRed);
-            AddKeyValueLine(body, "自损", player.SelfLossDamage.ToString(), AccentOrange);
-            AddKeyValueLine(body, "格挡吸收", blockedDamage.ToString(), AccentCyan);
-            AddKeyValueLine(body, "生命伤害", unblockedDamage.ToString(), AccentGreen);
-            AddKeyValueLine(body, "过量伤害", overkillDamage.ToString(), AccentOrange);
-            AddTextLine(body, "按来源划分", MutedText, 11);
-
-            var visibleSources = sources.Take(settings.MaxRows).ToArray();
-            if (visibleSources.Length == 0)
-            {
-                AddTextLine(body, "暂无受到伤害来源。", MutedText);
-                continue;
-            }
-
-            foreach (var source in visibleSources)
-            {
-                AddKeyValueLine(
-                    body,
-                    $"{FormatSource(source)}（{source.Hits} 次）",
-                    source.Damage.ToString(),
-                    AccentRed);
-            }
+            return Array.Empty<DamageRowData>();
         }
 
-        AddModuleToGrid(body);
-    }
-    private static VBoxContainer CreateModule(string title, Color accent, float width)
-    {
-        var card = new PanelContainer
-        {
-            CustomMinimumSize = new Vector2(width, 0),
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        var cardStyle = new StyleBoxFlat
-        {
-            BgColor = new Color(0.055f, 0.07f, 0.105f, 0.82f),
-            BorderColor = new Color(accent.R, accent.G, accent.B, 0.72f),
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 4,
-            CornerRadiusTopRight = 4,
-            CornerRadiusBottomLeft = 4,
-            CornerRadiusBottomRight = 4,
-            ContentMarginLeft = 8,
-            ContentMarginTop = 7,
-            ContentMarginRight = 8,
-            ContentMarginBottom = 7
-        };
-        card.AddThemeStyleboxOverride("panel", cardStyle);
-
-        var body = new VBoxContainer
-        {
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        body.AddThemeConstantOverride("separation", 3);
-        card.AddChild(body);
-
-        var heading = new Label
-        {
-            Text = title,
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        heading.AddThemeColorOverride("font_color", accent);
-        heading.AddThemeFontSizeOverride("font_size", 14);
-        body.AddChild(heading);
-
-        var divider = new ColorRect
-        {
-            Color = new Color(accent.R, accent.G, accent.B, 0.25f),
-            CustomMinimumSize = new Vector2(0, 1),
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        body.AddChild(divider);
-        return body;
+        return currentTurn.Cards
+            .GroupBy(card => card.DisplayName, StringComparer.Ordinal)
+            .Select(group => new DamageRowData(group.Key, group.Sum(card => card.Damage)))
+            .ToArray();
     }
 
-    private static void AddModuleToGrid(VBoxContainer body)
+    private static IReadOnlyList<DamageRowData> BuildTakenRows(PlayerStatsSnapshot player)
     {
-        if (body.GetParent() is Control card)
-        {
-            _moduleGrid!.AddChild(card);
-        }
+        return player.IncomingSources
+            .Concat(player.SelfLossSources)
+            .GroupBy(source => source.Source, StringComparer.Ordinal)
+            .Select(group => new DamageRowData(group.Key, group.Sum(source => source.Damage)))
+            .ToArray();
     }
 
-    private static void AddSubHeader(VBoxContainer body, string text, Color color)
+    private static IReadOnlyList<DamageRowData> BuildTotalRows(CombatStatsSnapshot snapshot)
     {
-        var label = new Label
-        {
-            Text = text,
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        label.AddThemeColorOverride("font_color", color);
-        label.AddThemeFontSizeOverride("font_size", 13);
-        body.AddChild(label);
+        return snapshot.Players
+            .SelectMany(player => player.Sources)
+            .GroupBy(source => source.Source, StringComparer.Ordinal)
+            .Select(group => new DamageRowData(group.Key, group.Sum(source => source.Damage)))
+            .ToArray();
     }
 
-    private static void AddTextLine(VBoxContainer body, string text, Color color, int fontSize = 12)
+    private static void AddDamageRow(
+        DpsMeterSettingsData settings,
+        string labelText,
+        long damage,
+        double percentage)
     {
-        var label = new Label
+        var rowHeight = settings.CompactMode ? 24f : 28f;
+        var row = new Control
         {
-            Text = text,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            AutowrapMode = TextServer.AutowrapMode.WordSmart
-        };
-        label.AddThemeColorOverride("font_color", color);
-        label.AddThemeFontSizeOverride("font_size", fontSize);
-        body.AddChild(label);
-    }
-
-    private static void AddKeyValueLine(VBoxContainer body, string key, string value, Color? valueColor = null)
-    {
-        var row = new HBoxContainer
-        {
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        row.AddThemeConstantOverride("separation", 6);
-        body.AddChild(row);
-
-        var keyLabel = new Label
-        {
-            Text = key,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
+            CustomMinimumSize = new Vector2(0, rowHeight),
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            AutowrapMode = TextServer.AutowrapMode.WordSmart
+            MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        keyLabel.AddThemeColorOverride("font_color", PrimaryText);
-        keyLabel.AddThemeFontSizeOverride("font_size", 12);
-        row.AddChild(keyLabel);
 
-        var valueLabel = new Label
+        var progress = new ProgressBar
         {
-            Text = value,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            HorizontalAlignment = HorizontalAlignment.Right
+            MinValue = 0,
+            MaxValue = 100,
+            Value = percentage,
+            ShowPercentage = false,
+            MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        valueLabel.AddThemeColorOverride("font_color", valueColor ?? AccentCyan);
-        valueLabel.AddThemeFontSizeOverride("font_size", 12);
-        row.AddChild(valueLabel);
+        progress.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        progress.AddThemeStyleboxOverride("background", CreateBarStyle(BarBackground, 5));
+        progress.AddThemeStyleboxOverride("fill", CreateBarStyle(BarFill, 5));
+        row.AddChild(progress);
+
+        var overlay = new MarginContainer
+        {
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        overlay.SetAnchorsPreset(Control.LayoutPreset.FullRect);
+        overlay.AddThemeConstantOverride("margin_left", 7);
+        overlay.AddThemeConstantOverride("margin_right", 7);
+        overlay.AddThemeConstantOverride("margin_top", 2);
+        overlay.AddThemeConstantOverride("margin_bottom", 2);
+        row.AddChild(overlay);
+
+        var textRow = new HBoxContainer
+        {
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        textRow.AddThemeConstantOverride("separation", 8);
+        overlay.AddChild(textRow);
+
+        var nameLabel = new Label
+        {
+            Text = labelText,
+            VerticalAlignment = VerticalAlignment.Center,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            MouseFilter = Control.MouseFilterEnum.Ignore,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
+        };
+        nameLabel.AddThemeColorOverride("font_color", PrimaryText);
+        nameLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+        nameLabel.AddThemeConstantOverride("outline_size", 2);
+        nameLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
+        textRow.AddChild(nameLabel);
+
+        var damageLabel = new Label
+        {
+            Text = damage.ToString(),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(42, 0),
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        damageLabel.AddThemeColorOverride("font_color", PrimaryText);
+        damageLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
+        textRow.AddChild(damageLabel);
+
+        var percentageLabel = new Label
+        {
+            Text = $"{Math.Round(percentage):0}%",
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            CustomMinimumSize = new Vector2(42, 0),
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        percentageLabel.AddThemeColorOverride("font_color", PrimaryText);
+        percentageLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
+        textRow.AddChild(percentageLabel);
+
+        _moduleGrid!.AddChild(row);
     }
 
-    private static void AddModuleToGrid(Control module)
+    private static StyleBoxFlat CreateBarStyle(Color color, int radius)
     {
-        _moduleGrid!.AddChild(module);
+        return new StyleBoxFlat
+        {
+            BgColor = color,
+            CornerRadiusTopLeft = radius,
+            CornerRadiusTopRight = radius,
+            CornerRadiusBottomLeft = radius,
+            CornerRadiusBottomRight = radius
+        };
     }
 
-    private static float GetModuleWidth(DpsMeterSettingsData settings)
+    private static void NormalizeScopeSelection(DpsMeterSettingsData settings)
     {
-        return settings.CompactMode ? 270f : 320f;
+        if (_scopeIndex == ScopeTaken && !settings.ShowTakenBreakdown)
+        {
+            _scopeIndex = ScopeCurrent;
+        }
+
+        if (_scopeIndex != ScopeTaken && !settings.ShowDealtBreakdown)
+        {
+            _scopeIndex = settings.ShowTakenBreakdown ? ScopeTaken : ScopeCurrent;
+        }
+
+        _scopeOption!.Selected = _scopeIndex;
+        _scopeOption.SetItemDisabled(ScopeCurrent, !settings.ShowDealtBreakdown);
+        _scopeOption.SetItemDisabled(ScopeTurn, !settings.ShowDealtBreakdown);
+        _scopeOption.SetItemDisabled(ScopeTaken, !settings.ShowTakenBreakdown);
+        _scopeOption.SetItemDisabled(ScopeTotal, !settings.ShowDealtBreakdown);
+    }
+
+    private static void UpdateNavigationState(int playerCount)
+    {
+        var canSwitchPlayer = _scopeIndex != ScopeTotal && playerCount > 1;
+        _previousPlayerButton!.Disabled = !canSwitchPlayer;
+        _nextPlayerButton!.Disabled = !canSwitchPlayer;
+        _previousPlayerButton.TooltipText = canSwitchPlayer ? "上一个玩家" : "当前仅有一个统计对象";
+        _nextPlayerButton.TooltipText = _previousPlayerButton.TooltipText;
+    }
+
+    private static void OnPreviousPlayerPressed()
+    {
+        MovePlayerSelection(-1);
+    }
+
+    private static void OnNextPlayerPressed()
+    {
+        MovePlayerSelection(1);
+    }
+
+    private static void MovePlayerSelection(int delta)
+    {
+        var players = DpsStats.GetSnapshot().Players;
+        if (players.Count <= 1)
+        {
+            return;
+        }
+
+        _selectedPlayerIndex = (_selectedPlayerIndex + delta + players.Count) % players.Count;
+        Refresh();
+    }
+
+    private static void OnScopeSelected(long index)
+    {
+        _scopeIndex = Math.Clamp((int)index, ScopeCurrent, ScopeTotal);
+        _selectedPlayerIndex = 0;
+        Refresh();
     }
 
     private static void EnsurePanelSize(DpsMeterSettingsData settings)
@@ -521,14 +549,14 @@ public static class DpsMeterUi
             BorderWidthTop = 1,
             BorderWidthRight = 1,
             BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 6,
-            CornerRadiusTopRight = 6,
-            CornerRadiusBottomLeft = 6,
-            CornerRadiusBottomRight = 6,
-            ContentMarginLeft = 10,
-            ContentMarginTop = 8,
-            ContentMarginRight = 10,
-            ContentMarginBottom = 8
+            CornerRadiusTopLeft = 11,
+            CornerRadiusTopRight = 11,
+            CornerRadiusBottomLeft = 11,
+            CornerRadiusBottomRight = 11,
+            ContentMarginLeft = 11,
+            ContentMarginTop = 10,
+            ContentMarginRight = 11,
+            ContentMarginBottom = 10
         };
         _panel.AddThemeStyleboxOverride("panel", _panelStyle);
         _panel.GuiInput += OnPanelGuiInput;
@@ -539,27 +567,133 @@ public static class DpsMeterUi
             Name = "Sts2DpsMeterLayout",
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        layout.AddThemeConstantOverride("separation", 6);
+        layout.AddThemeConstantOverride("separation", 8);
         _panel.AddChild(layout);
+
+        var headerRow = new HBoxContainer
+        {
+            Name = "Sts2DpsMeterHeader",
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        headerRow.AddThemeConstantOverride("separation", 6);
+        layout.AddChild(headerRow);
+
+        _previousPlayerButton = CreateArrowButton("◀", OnPreviousPlayerPressed);
+        headerRow.AddChild(_previousPlayerButton);
 
         _header = new Label
         {
-            Text = "Sts2 DPS  |  等待战斗开始...",
+            Text = "伤害：0",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        _header.AddThemeColorOverride("font_color", AccentCyan);
-        _header.AddThemeFontSizeOverride("font_size", 14);
-        layout.AddChild(_header);
+        _header.AddThemeColorOverride("font_color", TitleBlue);
+        _header.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _header.AddThemeConstantOverride("outline_size", 3);
+        _header.AddThemeFontSizeOverride("font_size", 19);
+        headerRow.AddChild(_header);
+
+        _nextPlayerButton = CreateArrowButton("▶", OnNextPlayerPressed);
+        headerRow.AddChild(_nextPlayerButton);
+
+        _scopeOption = new OptionButton
+        {
+            CustomMinimumSize = new Vector2(88, 30),
+            MouseFilter = Control.MouseFilterEnum.Stop,
+            TooltipText = "选择伤害统计范围"
+        };
+        _scopeOption.AddItem("当前");
+        _scopeOption.AddItem("本回合");
+        _scopeOption.AddItem("受到");
+        _scopeOption.AddItem("总计");
+        _scopeOption.Selected = ScopeCurrent;
+        _scopeOption.ItemSelected += OnScopeSelected;
+        _scopeOption.AddThemeColorOverride("font_color", PrimaryText);
+        _scopeOption.AddThemeFontSizeOverride("font_size", 12);
+        ApplyDropdownStyle(_scopeOption);
+        headerRow.AddChild(_scopeOption);
+
+        var divider = new ColorRect
+        {
+            Color = new Color(PanelBorder.R, PanelBorder.G, PanelBorder.B, 0.18f),
+            CustomMinimumSize = new Vector2(0, 1),
+            MouseFilter = Control.MouseFilterEnum.Ignore
+        };
+        layout.AddChild(divider);
 
         _moduleGrid = new GridContainer
         {
-            Name = "Sts2DpsMeterModules",
-            Columns = 2,
+            Name = "Sts2DpsMeterRows",
+            Columns = 1,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        _moduleGrid.AddThemeConstantOverride("h_separation", 8);
-        _moduleGrid.AddThemeConstantOverride("v_separation", 8);
+        _moduleGrid.AddThemeConstantOverride("h_separation", 6);
+        _moduleGrid.AddThemeConstantOverride("v_separation", 6);
         layout.AddChild(_moduleGrid);
+    }
+
+    private static Button CreateArrowButton(string text, Action pressed)
+    {
+        var button = new Button
+        {
+            Text = text,
+            Flat = true,
+            CustomMinimumSize = new Vector2(30, 30),
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Stop
+        };
+        button.AddThemeColorOverride("font_color", ArrowBlue);
+        button.AddThemeColorOverride("font_hover_color", new Color(0.45f, 0.78f, 1f));
+        button.AddThemeColorOverride("font_pressed_color", new Color(0.1f, 0.4f, 0.9f));
+        button.AddThemeColorOverride("font_disabled_color", new Color(ArrowBlue.R, ArrowBlue.G, ArrowBlue.B, 0.28f));
+        button.AddThemeFontSizeOverride("font_size", 20);
+        button.AddThemeStyleboxOverride("normal", CreateFlatButtonStyle(new Color(0f, 0f, 0f, 0f)));
+        button.AddThemeStyleboxOverride("hover", CreateFlatButtonStyle(new Color(0.08f, 0.28f, 0.62f, 0.5f)));
+        button.AddThemeStyleboxOverride("pressed", CreateFlatButtonStyle(new Color(0.05f, 0.18f, 0.42f, 0.75f)));
+        button.AddThemeStyleboxOverride("focus", CreateFlatButtonStyle(new Color(0f, 0f, 0f, 0f)));
+        button.Pressed += pressed;
+        return button;
+    }
+
+    private static StyleBoxFlat CreateFlatButtonStyle(Color background)
+    {
+        return new StyleBoxFlat
+        {
+            BgColor = background,
+            CornerRadiusTopLeft = 5,
+            CornerRadiusTopRight = 5,
+            CornerRadiusBottomLeft = 5,
+            CornerRadiusBottomRight = 5
+        };
+    }
+
+    private static void ApplyDropdownStyle(OptionButton option)
+    {
+        var normal = new StyleBoxFlat
+        {
+            BgColor = DropdownBackground,
+            BorderColor = new Color(PanelBorder.R, PanelBorder.G, PanelBorder.B, 0.72f),
+            BorderWidthLeft = 1,
+            BorderWidthTop = 1,
+            BorderWidthRight = 1,
+            BorderWidthBottom = 1,
+            CornerRadiusTopLeft = 5,
+            CornerRadiusTopRight = 5,
+            CornerRadiusBottomLeft = 5,
+            CornerRadiusBottomRight = 5,
+            ContentMarginLeft = 7,
+            ContentMarginRight = 7
+        };
+        var hover = normal.Duplicate() as StyleBoxFlat ?? normal;
+        hover.BorderColor = new Color(0.32f, 0.72f, 1f, 0.95f);
+        var pressed = normal.Duplicate() as StyleBoxFlat ?? normal;
+        pressed.BgColor = new Color(0.08f, 0.1f, 0.14f, 1f);
+        option.AddThemeStyleboxOverride("normal", normal);
+        option.AddThemeStyleboxOverride("hover", hover);
+        option.AddThemeStyleboxOverride("pressed", pressed);
+        option.AddThemeStyleboxOverride("focus", hover);
     }
 
     private static void OnPanelGuiInput(InputEvent @event)
@@ -597,7 +731,7 @@ public static class DpsMeterUi
                 {
                     _dragging = false;
                     settings.PositionX = _panel!.Position.X;
-                    settings.PositionY = _panel!.Position.Y;
+                    settings.PositionY = _panel.Position.Y;
                     DpsMeterSettings.Save();
                     DpsMeterSettingsUi.Refresh();
                 }
@@ -615,50 +749,6 @@ public static class DpsMeterUi
         }
     }
 
-    private static string FormatSource(SourceStatsSnapshot source)
-    {
-        var parts = new List<string>
-        {
-            GetSourceTypeLabel(source.SourceType),
-            source.Source
-        };
-
-        if (!string.IsNullOrWhiteSpace(source.SemanticTag))
-        {
-            parts.Add(source.SemanticTag);
-        }
-
-        if (!string.IsNullOrWhiteSpace(source.TriggerCard))
-        {
-            parts.Add($"触发卡牌：{source.TriggerCard}");
-        }
-
-        if (source.TrackingStatus == SourceTrackingStatus.Deferred &&
-            source.Mechanism == DamageMechanismKind.Poison)
-        {
-            parts.Add("中毒来源待标记");
-        }
-
-        return string.Join(" / ", parts);
-    }
-
-    private static string GetSourceTypeLabel(DamageSourceType sourceType)
-    {
-        return sourceType switch
-        {
-            DamageSourceType.Card => "卡牌",
-            DamageSourceType.Power => "状态",
-            DamageSourceType.Relic => "遗物",
-            DamageSourceType.Potion => "药水",
-            DamageSourceType.Orb => "充能球",
-            DamageSourceType.Pet => "宠物",
-            DamageSourceType.Enemy => "敌方",
-            DamageSourceType.Event => "事件",
-            DamageSourceType.Self => "自损",
-            _ => "未知"
-        };
-    }
-
     private static void ClearChildren(Node node)
     {
         foreach (var child in node.GetChildren())
@@ -672,12 +762,15 @@ public static class DpsMeterUi
     {
         return value is not null && GodotObject.IsInstanceValid(value);
     }
+
+    private sealed record DamageRowData(string Label, long Damage);
+
+    private sealed record DamageViewData(string Title, long Total, IReadOnlyList<DamageRowData> Rows);
 }
 
 internal sealed class DpsMeterHost : Node
 {
     private double _refreshTimer;
-
 
     public override void _Input(InputEvent @event)
     {

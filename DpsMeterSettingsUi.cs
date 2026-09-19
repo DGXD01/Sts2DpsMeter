@@ -110,7 +110,7 @@ public static class DpsMeterSettingsUi
 
         var introduction = new Label
         {
-            Text = "模块可以自由拼接；设置会立即保存，战斗面板每 0.25 秒刷新。",
+            Text = "伤害发生后立即刷新。标题左右箭头切换玩家，右上角下拉框选择统计范围。",
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
@@ -168,16 +168,7 @@ public static class DpsMeterSettingsUi
         });
 
         AddSection("布局与密度");
-        AddOptionRow(
-            "面板列数",
-            new[] { "1 列", "2 列" },
-            Math.Clamp(settings.Columns, 1, 2) - 1,
-            index =>
-            {
-                settings.Columns = Math.Clamp(index + 1, 1, 2);
-                SaveAndRefresh();
-            });
-        AddSliderRow("每名玩家来源行数", settings.MaxRows, 1, 12, 1, value =>
+        AddSliderRow("伤害来源显示行数", settings.MaxRows, 1, 12, 1, value =>
         {
             settings.MaxRows = Math.Clamp((int)value, 1, 12);
             SaveAndRefresh();
