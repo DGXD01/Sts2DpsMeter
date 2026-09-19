@@ -8,6 +8,9 @@ namespace Sts2DpsMeter;
 
 public static class DpsMeterUi
 {
+    private const float MinimumPanelWidth = 320f;
+    private const float MinimumPanelHeight = 1f;
+
     private static readonly Color PanelBackground = new(0.035f, 0.045f, 0.07f, 0.92f);
     private static readonly Color PanelBorder = new(0.25f, 0.65f, 0.95f, 0.95f);
     private static readonly Color AccentCyan = new(0.42f, 0.86f, 1f);
@@ -28,6 +31,8 @@ public static class DpsMeterUi
     private static bool _visibilityInitialized;
     private static bool _dragging;
     private static int _immediateRefreshRequested;
+    private static int _deferredRefreshQueued;
+    private static int _deferredPanelFitQueued;
 
     public static bool IsVisible => _visible;
 
@@ -58,6 +63,7 @@ public static class DpsMeterUi
                     ProcessMode = Node.ProcessModeEnum.Always
                 };
                 root.AddChild(_host);
+                _host.SetProcess(true);
             }
 
             if (!IsAlive(_canvas))
@@ -121,16 +127,55 @@ public static class DpsMeterUi
         }
 
         EnsurePanelSize(settings);
+        QueueDeferredPanelFit();
     }
 
     public static void RequestImmediateRefresh()
     {
+        // 伤害 Hook 由游戏主线程同步调用时，直接刷新，避免等待下一帧或回合结束。
+        if (IsMainThread())
+        {
+            Interlocked.Exchange(ref _immediateRefreshRequested, 0);
+            Refresh();
+            return;
+        }
+
+        // 后台线程不能直接操作 Godot 控件，统一投递到主线程。
         Interlocked.Exchange(ref _immediateRefreshRequested, 1);
+        QueueDeferredRefresh();
     }
 
     internal static bool ConsumeImmediateRefreshRequest()
     {
         return Interlocked.Exchange(ref _immediateRefreshRequested, 0) == 1;
+    }
+
+    internal static void FlushDeferredRefresh()
+    {
+        Interlocked.Exchange(ref _deferredRefreshQueued, 0);
+        if (ConsumeImmediateRefreshRequest())
+        {
+            Refresh();
+        }
+    }
+
+    private static bool IsMainThread()
+    {
+        try
+        {
+            return OS.GetThreadCallerId() == OS.GetMainThreadId();
+        }
+        catch
+        {
+            // 无法判断线程时保守地走延迟队列，避免在后台线程直接访问控件。
+            return false;
+        }
+    }
+
+    internal static void FlushDeferredPanelFit()
+    {
+        Interlocked.Exchange(ref _deferredPanelFitQueued, 0);
+        FitPanelToContent(DpsMeterSettings.Current);
     }
 
     public static void ToggleVisibility()
@@ -381,19 +426,63 @@ public static class DpsMeterUi
 
     private static void EnsurePanelSize(DpsMeterSettingsData settings)
     {
-        _panel!.CustomMinimumSize = new Vector2(320f, 180f);
+        FitPanelToContent(settings);
+    }
+
+    private static void FitPanelToContent(DpsMeterSettingsData settings)
+    {
+        if (!IsAlive(_panel))
+        {
+            return;
+        }
+
+        _panel!.CustomMinimumSize = new Vector2(MinimumPanelWidth, 0f);
         var minimum = _panel.GetCombinedMinimumSize();
         var viewportSize = GetViewportSize();
-        var maxWidth = Mathf.Max(320f, viewportSize.X - 24f);
-        var maxHeight = Mathf.Max(180f, viewportSize.Y - 24f);
-        var width = Mathf.Clamp(minimum.X, 320f, maxWidth);
-        var height = Mathf.Clamp(minimum.Y, 180f, maxHeight);
+        var maxWidth = Mathf.Max(MinimumPanelWidth, viewportSize.X - 24f);
+        var maxHeight = Mathf.Max(MinimumPanelHeight, viewportSize.Y - 24f);
+        var width = Mathf.Clamp(minimum.X, MinimumPanelWidth, maxWidth);
+        var height = Mathf.Clamp(minimum.Y, MinimumPanelHeight, maxHeight);
         _panel.Size = new Vector2(width, height);
 
         var scaledSize = _panel.Size * settings.UiScale;
         _panel.Position = new Vector2(
             Mathf.Clamp(_panel.Position.X, 0f, Mathf.Max(0f, viewportSize.X - scaledSize.X)),
             Mathf.Clamp(_panel.Position.Y, 0f, Mathf.Max(0f, viewportSize.Y - scaledSize.Y)));
+    }
+
+    private static void QueueDeferredRefresh()
+    {
+        if (!IsAlive(_host) || Interlocked.Exchange(ref _deferredRefreshQueued, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            Callable.From(FlushDeferredRefresh).CallDeferred();
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _deferredRefreshQueued, 0);
+        }
+    }
+
+    private static void QueueDeferredPanelFit()
+    {
+        if (!IsAlive(_host) || Interlocked.Exchange(ref _deferredPanelFitQueued, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            Callable.From(FlushDeferredPanelFit).CallDeferred();
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _deferredPanelFitQueued, 0);
+        }
     }
 
     private static Vector2 GetViewportSize()
@@ -419,8 +508,8 @@ public static class DpsMeterUi
         {
             Name = "Sts2DpsMeterPanel",
             Position = new Vector2(18, 18),
-            Size = new Vector2(680, 240),
-            CustomMinimumSize = new Vector2(360, 180),
+            Size = new Vector2(MinimumPanelWidth, MinimumPanelHeight),
+            CustomMinimumSize = new Vector2(MinimumPanelWidth, 0f),
             MouseFilter = Control.MouseFilterEnum.Stop
         };
 
@@ -588,6 +677,7 @@ public static class DpsMeterUi
 internal sealed class DpsMeterHost : Node
 {
     private double _refreshTimer;
+
 
     public override void _Input(InputEvent @event)
     {
