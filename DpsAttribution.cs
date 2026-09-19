@@ -5,6 +5,8 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Cards;
+using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.ValueProps;
 
 namespace Sts2DpsMeter;
@@ -38,14 +40,50 @@ public enum AttributionConfidence
     Unknown
 }
 
+public enum DamageMechanismKind
+{
+    Unknown,
+    DirectAttack,
+    PowerEffect,
+    Poison,
+    Thorns,
+    Reflect,
+    HpLoss
+}
+
+public enum SourceTrackingStatus
+{
+    NotApplicable,
+    Deferred,
+    Tracked,
+    Unknown
+}
+
+public sealed record PoisonSourceInfo(
+    string? SourceInternalId,
+    string? SourceDisplayName,
+    int? AppliedStacks,
+    SourceTrackingStatus TrackingStatus)
+{
+    public static PoisonSourceInfo Deferred { get; } = new(
+        null,
+        null,
+        null,
+        SourceTrackingStatus.Deferred);
+}
+
 public sealed record DamageAttribution(
     string DisplayName,
     string InternalId,
     DamageSourceType SourceType,
     DamageCategory Category,
     AttributionConfidence Confidence,
+    DamageMechanismKind Mechanism,
+    SourceTrackingStatus TrackingStatus,
     string? TriggerCard,
+    string? TriggerCardId,
     string? SemanticTag,
+    PoisonSourceInfo? PoisonSource,
     Player? AccountablePlayer);
 
 public static class DpsAttribution
@@ -89,6 +127,14 @@ public static class DpsAttribution
         ["ReflectPower"] = "反伤",
         ["ThornsPower"] = "反伤",
         ["ConstrictPower"] = "束缚/持续伤害"
+    };
+
+    private static readonly Dictionary<Type, Type> PowerOriginCardTypes = new()
+    {
+        [typeof(FlameBarrierPower)] = typeof(FlameBarrier),
+        [typeof(InfernoPower)] = typeof(Inferno),
+        [typeof(JuggernautPower)] = typeof(Juggernaut),
+        [typeof(CrimsonMantlePower)] = typeof(CrimsonMantle)
     };
 
     public static DamageAttribution Resolve(
@@ -135,9 +181,13 @@ public static class DpsAttribution
         }
 
         var card = cardSource ?? FindFirst<CardModel>(chain);
+        var triggerCard = ResolveTriggerCardInfo(chain, card, directModel)
+            ?? ResolvePowerOriginCardInfo(directModel);
         var accountablePlayer = ResolveAccountablePlayer(directModel, dealer, target, card);
         var selfLoss = IsSelfDamage(dealer, target, directModel, card);
         var category = ResolveCategory(target, directModel, dealer, accountablePlayer, selfLoss);
+        var mechanism = ResolveDamageMechanism(directModel, props, selfLoss);
+        var poisonSource = ResolvePoisonSource(mechanism);
 
         if (category == DamageCategory.Ignored)
         {
@@ -147,6 +197,10 @@ public static class DpsAttribution
                 DamageSourceType.Unknown,
                 DamageCategory.Ignored,
                 AttributionConfidence.Unknown,
+                DamageMechanismKind.Unknown,
+                SourceTrackingStatus.Unknown,
+                null,
+                null,
                 null,
                 null,
                 null);
@@ -154,6 +208,11 @@ public static class DpsAttribution
 
         if (directModel is null)
         {
+            var creatureConfidence = directFromGameStack
+                ? AttributionConfidence.Exact
+                : AttributionConfidence.Inferred;
+            var trackingStatus = ResolveTrackingStatus(null, triggerCard, creatureConfidence);
+
             if (dealer is not null)
             {
                 var creatureKind = dealer.IsPet
@@ -166,10 +225,6 @@ public static class DpsAttribution
                 var displayName = dealer.IsPet && card is not null
                     ? $"宠物 + {GetModelTitle(card)}"
                     : SafeCreatureName(dealer);
-                var fallbackTriggerCard = dealer.IsPet && card is not null ? GetModelTitle(card) : null;
-                var creatureConfidence = directFromGameStack
-                    ? AttributionConfidence.Exact
-                    : AttributionConfidence.Inferred;
 
                 return new DamageAttribution(
                     displayName,
@@ -177,8 +232,12 @@ public static class DpsAttribution
                     creatureKind,
                     category,
                     creatureConfidence,
-                    fallbackTriggerCard,
+                    mechanism,
+                    trackingStatus,
+                    triggerCard?.DisplayName,
+                    triggerCard?.InternalId,
                     null,
+                    poisonSource,
                     accountablePlayer);
             }
 
@@ -188,15 +247,18 @@ public static class DpsAttribution
                 DamageSourceType.Unknown,
                 category,
                 AttributionConfidence.Unknown,
+                mechanism,
+                trackingStatus,
+                triggerCard?.DisplayName,
+                triggerCard?.InternalId,
                 null,
-                null,
+                poisonSource,
                 accountablePlayer);
         }
 
         var sourceType = GetSourceType(directModel);
         var displayTitle = GetModelTitle(directModel);
         var internalId = GetModelInternalId(directModel);
-        var triggerCard = ResolveTriggerCard(chain, card, directModel);
         var semanticTag = ResolveSemanticTag(directModel, chain, result, props);
         var confidence = directFromGameStack
             ? AttributionConfidence.Exact
@@ -212,17 +274,22 @@ public static class DpsAttribution
             confidence = AttributionConfidence.Unknown;
         }
 
+        var finalTrackingStatus = ResolveTrackingStatus(directModel, triggerCard, confidence);
+
         return new DamageAttribution(
             displayTitle,
             internalId,
             sourceType,
             category,
             confidence,
-            triggerCard,
+            mechanism,
+            finalTrackingStatus,
+            triggerCard?.DisplayName,
+            triggerCard?.InternalId,
             semanticTag,
+            poisonSource,
             accountablePlayer);
     }
-
     private static AbstractModel? SelectDirectModel(IReadOnlyList<AbstractModel> chain)
     {
         foreach (var model in chain)
@@ -447,27 +514,118 @@ public static class DpsAttribution
         return power.Owner.IsPlayer || power.Owner.IsPet || power.Applier?.IsPlayer == true || power.Applier?.IsPet == true;
     }
 
-    private static string? ResolveTriggerCard(
+    private static TriggerCardInfo? ResolveTriggerCardInfo(
         IReadOnlyList<AbstractModel> chain,
         CardModel? card,
-        AbstractModel directModel)
+        AbstractModel? directModel)
     {
         if (card is not null && !ReferenceEquals(card, directModel))
         {
-            return GetModelTitle(card);
+            return CreateTriggerCardInfo(card);
         }
 
         foreach (var model in chain)
         {
             if (model is CardModel candidate && !ReferenceEquals(candidate, directModel))
             {
-                return GetModelTitle(candidate);
+                return CreateTriggerCardInfo(candidate);
             }
         }
 
         return null;
     }
 
+    private static TriggerCardInfo? ResolvePowerOriginCardInfo(AbstractModel? directModel)
+    {
+        if (directModel is null || !PowerOriginCardTypes.TryGetValue(directModel.GetType(), out var cardType))
+        {
+            return null;
+        }
+
+        try
+        {
+            return new TriggerCardInfo(
+                GetModelTitle(directModel),
+                ModelDb.GetId(cardType).ToString());
+        }
+        catch
+        {
+            // 无法解析稳定卡牌 ID 时保留能力来源，不能影响伤害记录。
+            return null;
+        }
+    }
+
+    private static TriggerCardInfo CreateTriggerCardInfo(CardModel card)
+    {
+        return new TriggerCardInfo(GetModelTitle(card), GetModelInternalId(card));
+    }
+
+    private static DamageMechanismKind ResolveDamageMechanism(
+        AbstractModel? directModel,
+        ValueProp props,
+        bool selfLoss)
+    {
+        var typeName = directModel?.GetType().Name;
+        switch (typeName)
+        {
+            case "PoisonPower":
+                return DamageMechanismKind.Poison;
+            case "ThornsPower":
+                return DamageMechanismKind.Thorns;
+            case "FlameBarrierPower":
+            case "ReflectPower":
+                return DamageMechanismKind.Reflect;
+        }
+
+        if (selfLoss && props.HasFlag(ValueProp.Unblockable) && props.HasFlag(ValueProp.Unpowered))
+        {
+            return DamageMechanismKind.HpLoss;
+        }
+
+        if (props.HasFlag(ValueProp.Move))
+        {
+            return DamageMechanismKind.DirectAttack;
+        }
+
+        if (directModel is CardModel)
+        {
+            return DamageMechanismKind.DirectAttack;
+        }
+
+        if (directModel is PowerModel)
+        {
+            return DamageMechanismKind.PowerEffect;
+        }
+
+        return DamageMechanismKind.Unknown;
+    }
+
+    private static SourceTrackingStatus ResolveTrackingStatus(
+        AbstractModel? directModel,
+        TriggerCardInfo? triggerCard,
+        AttributionConfidence confidence)
+    {
+        if (directModel?.GetType().Name == "PoisonPower")
+        {
+            return SourceTrackingStatus.Deferred;
+        }
+
+        if (confidence == AttributionConfidence.Unknown || directModel is null && triggerCard is null)
+        {
+            return SourceTrackingStatus.Unknown;
+        }
+
+        return SourceTrackingStatus.Tracked;
+    }
+
+    private static PoisonSourceInfo? ResolvePoisonSource(DamageMechanismKind mechanism)
+    {
+        return mechanism == DamageMechanismKind.Poison
+            ? PoisonSourceInfo.Deferred
+            : null;
+    }
+
+    private sealed record TriggerCardInfo(string DisplayName, string InternalId);
     private static string? ResolveSemanticTag(
         AbstractModel directModel,
         IReadOnlyList<AbstractModel> chain,

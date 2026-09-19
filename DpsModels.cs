@@ -9,14 +9,46 @@ public sealed record SourceStatsSnapshot(
     DamageSourceType SourceType,
     DamageCategory Category,
     AttributionConfidence Confidence,
+    DamageMechanismKind Mechanism,
+    SourceTrackingStatus TrackingStatus,
     string? TriggerCard,
+    string? TriggerCardId,
     string? SemanticTag,
+    PoisonSourceInfo? PoisonSource,
     int Hits,
     long BlockedDamage,
     long UnblockedDamage,
     long OverkillDamage);
 
-public sealed record TurnStatsSnapshot(int Turn, long Damage);
+public sealed record CardDamageSnapshot(
+    string GroupId,
+    string DisplayName,
+    string? CardId,
+    DamageSourceType SourceType,
+    SourceTrackingStatus TrackingStatus,
+    string? TriggerCard,
+    string? TriggerCardId,
+    string? SemanticTag,
+    PoisonSourceInfo? PoisonSource,
+    int Hits,
+    long Damage,
+    long BlockedDamage,
+    long UnblockedDamage,
+    long OverkillDamage);
+
+public sealed record MechanismDamageSnapshot(
+    DamageMechanismKind Mechanism,
+    int Hits,
+    long Damage,
+    long BlockedDamage,
+    long UnblockedDamage,
+    long OverkillDamage);
+
+public sealed record TurnStatsSnapshot(
+    int Turn,
+    long Damage,
+    IReadOnlyList<CardDamageSnapshot> Cards,
+    IReadOnlyList<MechanismDamageSnapshot> Mechanisms);
 
 public sealed record PlayerStatsSnapshot(
     ulong PlayerNetId,

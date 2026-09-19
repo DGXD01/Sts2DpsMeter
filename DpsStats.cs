@@ -154,6 +154,7 @@ public static class DpsStats
 
                     stats.DamageByTurn[_currentTurn] =
                         stats.DamageByTurn.GetValueOrDefault(_currentTurn) + damage;
+                    AddOutputBreakdown(stats, attribution, damage, result, _currentTurn);
                     break;
                 case DamageCategory.Incoming:
                     stats.IncomingDamage += damage;
@@ -205,10 +206,7 @@ public static class DpsStats
                         .OrderByDescending(source => source.Damage)
                         .Select(source => source.ToSnapshot())
                         .ToArray(),
-                    player.DamageByTurn
-                        .OrderBy(pair => pair.Key)
-                        .Select(pair => new TurnStatsSnapshot(pair.Key, pair.Value))
-                        .ToArray()))
+                    BuildTurnSnapshots(player)))
                 .ToArray();
 
             return new CombatStatsSnapshot(_active, _elapsedSeconds, _currentTurn, players);
@@ -272,6 +270,95 @@ public static class DpsStats
         return creature.IsPet ? creature.PetOwner : null;
     }
 
+    private static IReadOnlyList<TurnStatsSnapshot> BuildTurnSnapshots(PlayerAccumulator player)
+    {
+        return player.DamageByTurn.Keys
+            .Concat(player.CardsByTurn.Keys)
+            .Concat(player.DamageByMechanismByTurn.Keys)
+            .Distinct()
+            .OrderBy(turn => turn)
+            .Select(turn => new TurnStatsSnapshot(
+                turn,
+                player.DamageByTurn.GetValueOrDefault(turn),
+                player.CardsByTurn.TryGetValue(turn, out var cards)
+                    ? cards.Values
+                        .OrderByDescending(card => card.Damage)
+                        .Select(card => card.ToSnapshot())
+                        .ToArray()
+                    : Array.Empty<CardDamageSnapshot>(),
+                player.DamageByMechanismByTurn.TryGetValue(turn, out var mechanisms)
+                    ? mechanisms.Values
+                        .OrderByDescending(mechanism => mechanism.Damage)
+                        .Select(mechanism => mechanism.ToSnapshot())
+                        .ToArray()
+                    : Array.Empty<MechanismDamageSnapshot>()))
+            .ToArray();
+    }
+
+    private static void AddOutputBreakdown(
+        PlayerAccumulator player,
+        DamageAttribution attribution,
+        long damage,
+        DamageResult result,
+        int turn)
+    {
+        var identity = ResolveOutputGroupIdentity(attribution);
+
+        if (!player.CardsByTurn.TryGetValue(turn, out var cards))
+        {
+            cards = new Dictionary<string, CardDamageAccumulator>(StringComparer.Ordinal);
+            player.CardsByTurn.Add(turn, cards);
+        }
+
+        if (!cards.TryGetValue(identity.GroupId, out var card))
+        {
+            card = new CardDamageAccumulator(identity, attribution);
+            cards.Add(identity.GroupId, card);
+        }
+
+        card.Add(damage, result);
+
+        if (!player.DamageByMechanismByTurn.TryGetValue(turn, out var mechanisms))
+        {
+            mechanisms = new Dictionary<DamageMechanismKind, MechanismAccumulator>();
+            player.DamageByMechanismByTurn.Add(turn, mechanisms);
+        }
+
+        if (!mechanisms.TryGetValue(attribution.Mechanism, out var mechanism))
+        {
+            mechanism = new MechanismAccumulator(attribution.Mechanism);
+            mechanisms.Add(attribution.Mechanism, mechanism);
+        }
+
+        mechanism.Add(damage, result);
+    }
+
+    private static OutputGroupIdentity ResolveOutputGroupIdentity(DamageAttribution attribution)
+    {
+        if (attribution.SourceType == DamageSourceType.Card
+            && !string.IsNullOrWhiteSpace(attribution.InternalId))
+        {
+            return new OutputGroupIdentity(
+                attribution.InternalId,
+                attribution.DisplayName,
+                attribution.InternalId);
+        }
+
+        if (!string.IsNullOrWhiteSpace(attribution.TriggerCardId))
+        {
+            return new OutputGroupIdentity(
+                attribution.TriggerCardId,
+                attribution.TriggerCard ?? attribution.DisplayName,
+                attribution.TriggerCardId);
+        }
+
+        var groupId = string.Join(
+            "|",
+            attribution.SourceType,
+            attribution.InternalId,
+            attribution.Mechanism);
+        return new OutputGroupIdentity(groupId, attribution.DisplayName, null);
+    }
     private static string BuildSourceKey(DamageAttribution attribution)
     {
         return string.Join(
@@ -279,8 +366,12 @@ public static class DpsStats
             attribution.SourceType,
             attribution.InternalId,
             attribution.DisplayName,
+            attribution.Mechanism,
+            attribution.TrackingStatus,
             attribution.TriggerCard ?? string.Empty,
-            attribution.SemanticTag ?? string.Empty);
+            attribution.TriggerCardId ?? string.Empty,
+            attribution.SemanticTag ?? string.Empty,
+            attribution.PoisonSource?.TrackingStatus);
     }
 
     private static string FormatSource(SourceStatsSnapshot source)
@@ -386,6 +477,127 @@ public static class DpsStats
         public Dictionary<string, SourceAccumulator> SelfLossBySource { get; } = new();
 
         public Dictionary<int, long> DamageByTurn { get; } = new();
+
+        public Dictionary<int, Dictionary<string, CardDamageAccumulator>> CardsByTurn { get; } = new();
+
+        public Dictionary<int, Dictionary<DamageMechanismKind, MechanismAccumulator>> DamageByMechanismByTurn { get; } = new();
+    }
+
+    private sealed record OutputGroupIdentity(
+        string GroupId,
+        string DisplayName,
+        string? CardId);
+
+    private sealed class CardDamageAccumulator
+    {
+        public CardDamageAccumulator(OutputGroupIdentity identity, DamageAttribution attribution)
+        {
+            GroupId = identity.GroupId;
+            DisplayName = identity.DisplayName;
+            CardId = identity.CardId;
+            SourceType = attribution.SourceType;
+            TrackingStatus = attribution.TrackingStatus;
+            TriggerCard = attribution.TriggerCard;
+            TriggerCardId = attribution.TriggerCardId;
+            SemanticTag = attribution.SemanticTag;
+            PoisonSource = attribution.PoisonSource;
+        }
+
+        public string GroupId { get; }
+
+        public string DisplayName { get; }
+
+        public string? CardId { get; }
+
+        public DamageSourceType SourceType { get; }
+
+        public SourceTrackingStatus TrackingStatus { get; }
+
+        public string? TriggerCard { get; }
+
+        public string? TriggerCardId { get; }
+
+        public string? SemanticTag { get; }
+
+        public PoisonSourceInfo? PoisonSource { get; }
+
+        public int Hits { get; private set; }
+
+        public long Damage { get; private set; }
+
+        public long BlockedDamage { get; private set; }
+
+        public long UnblockedDamage { get; private set; }
+
+        public long OverkillDamage { get; private set; }
+
+        public void Add(long damage, DamageResult result)
+        {
+            Damage += damage;
+            BlockedDamage += result.BlockedDamage;
+            UnblockedDamage += result.UnblockedDamage;
+            OverkillDamage += result.OverkillDamage;
+            Hits++;
+        }
+
+        public CardDamageSnapshot ToSnapshot()
+        {
+            return new CardDamageSnapshot(
+                GroupId,
+                DisplayName,
+                CardId,
+                SourceType,
+                TrackingStatus,
+                TriggerCard,
+                TriggerCardId,
+                SemanticTag,
+                PoisonSource,
+                Hits,
+                Damage,
+                BlockedDamage,
+                UnblockedDamage,
+                OverkillDamage);
+        }
+    }
+
+    private sealed class MechanismAccumulator
+    {
+        public MechanismAccumulator(DamageMechanismKind mechanism)
+        {
+            Mechanism = mechanism;
+        }
+
+        public DamageMechanismKind Mechanism { get; }
+
+        public int Hits { get; private set; }
+
+        public long Damage { get; private set; }
+
+        public long BlockedDamage { get; private set; }
+
+        public long UnblockedDamage { get; private set; }
+
+        public long OverkillDamage { get; private set; }
+
+        public void Add(long damage, DamageResult result)
+        {
+            Damage += damage;
+            BlockedDamage += result.BlockedDamage;
+            UnblockedDamage += result.UnblockedDamage;
+            OverkillDamage += result.OverkillDamage;
+            Hits++;
+        }
+
+        public MechanismDamageSnapshot ToSnapshot()
+        {
+            return new MechanismDamageSnapshot(
+                Mechanism,
+                Hits,
+                Damage,
+                BlockedDamage,
+                UnblockedDamage,
+                OverkillDamage);
+        }
     }
 
     private sealed class SourceAccumulator
@@ -425,8 +637,12 @@ public static class DpsStats
                 _attribution.SourceType,
                 _attribution.Category,
                 _attribution.Confidence,
+                _attribution.Mechanism,
+                _attribution.TrackingStatus,
                 _attribution.TriggerCard,
+                _attribution.TriggerCardId,
                 _attribution.SemanticTag,
+                _attribution.PoisonSource,
                 Hits,
                 BlockedDamage,
                 UnblockedDamage,
