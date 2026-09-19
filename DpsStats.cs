@@ -363,17 +363,16 @@ public static class DpsStats
     }
     private static string BuildSourceKey(DamageAttribution attribution)
     {
-        return string.Join(
-            "|",
-            attribution.SourceType,
-            attribution.InternalId,
-            attribution.DisplayName,
-            attribution.Mechanism,
-            attribution.TrackingStatus,
-            attribution.TriggerCard ?? string.Empty,
-            attribution.TriggerCardId ?? string.Empty,
-            attribution.SemanticTag ?? string.Empty,
-            attribution.PoisonSource?.TrackingStatus);
+        var identity = ResolveOutputGroupIdentity(attribution);
+        var stableGroupId = !string.IsNullOrWhiteSpace(identity.GroupId)
+            ? identity.GroupId
+            : string.Join(
+                "|",
+                attribution.SourceType,
+                attribution.DisplayName,
+                attribution.Mechanism);
+
+        return string.Join("|", attribution.SourceType, stableGroupId);
     }
 
     private static string FormatSource(SourceStatsSnapshot source)

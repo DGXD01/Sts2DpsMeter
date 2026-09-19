@@ -304,8 +304,10 @@ public static class DpsMeterUi
         }
 
         return currentTurn.Cards
-            .GroupBy(card => card.DisplayName, StringComparer.Ordinal)
-            .Select(group => new DamageRowData(group.Key, group.Sum(card => card.Damage)))
+            .GroupBy(card => card.CardId ?? card.GroupId, StringComparer.Ordinal)
+            .Select(group => new DamageRowData(
+                group.First().DisplayName,
+                group.Sum(card => card.Damage)))
             .ToArray();
     }
 
