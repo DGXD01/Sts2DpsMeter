@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Godot;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -36,6 +37,24 @@ public sealed class DpsHook : AbstractModel
         return Task.CompletedTask;
     }
 
+    public override Task AfterDiedToDoom(
+        PlayerChoiceContext choiceContext,
+        IReadOnlyList<Creature> creatures)
+    {
+        try
+        {
+            if (DpsStats.RecordDoomKills(creatures))
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 记录灾厄击杀失败：{exception}");
+        }
+
+        return Task.CompletedTask;
+    }
     public override Task AfterDamageGiven(
         PlayerChoiceContext choiceContext,
         Creature? dealer,

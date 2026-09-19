@@ -9,6 +9,7 @@ using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Powers;
 
 namespace Sts2DpsMeter;
 
@@ -44,6 +45,11 @@ public static class DpsSourceContext
             var popPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(PopModelPostfix));
             var powerFlashPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(PowerFlashPostfix));
             var relicFlashPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(RelicFlashPostfix));
+            var doomKillPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(DoomKillPrefix));
+            var doomKillMethod = AccessTools.Method(
+                typeof(DoomPower),
+                nameof(DoomPower.DoomKill),
+                new[] { typeof(IReadOnlyList<Creature>) });
 
             PatchRequired(harmony, pushModel, pushPostfix, "PlayerChoiceContext.PushModel");
             PatchRequired(harmony, popModel, popPostfix, "PlayerChoiceContext.PopModel");
@@ -60,6 +66,11 @@ public static class DpsSourceContext
                     new[] { typeof(IEnumerable<Creature>) }),
                 relicFlashPostfix,
                 "RelicModel.Flash(IEnumerable<Creature>)");
+            PatchRequiredPrefix(
+                harmony,
+                doomKillMethod,
+                doomKillPrefix,
+                "DoomPower.DoomKill");
 
             GD.Print($"[{ModEntry.ModId}] 已安装伤害来源上下文补丁");
         }
@@ -145,6 +156,18 @@ public static class DpsSourceContext
         RecordRecentModel(__instance);
     }
 
+    private static void DoomKillPrefix(IReadOnlyList<Creature> creatures)
+    {
+        try
+        {
+            DpsStats.CaptureDoomKills(creatures);
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 捕获灾厄击杀失败：{exception}");
+        }
+    }
+
     private static void PatchRequired(
         Harmony harmony,
         MethodBase? original,
@@ -157,6 +180,20 @@ public static class DpsSourceContext
         }
 
         harmony.Patch(original, postfix: new HarmonyMethod(postfix));
+    }
+
+    private static void PatchRequiredPrefix(
+        Harmony harmony,
+        MethodBase? original,
+        MethodInfo? prefix,
+        string description)
+    {
+        if (original is null || prefix is null)
+        {
+            throw new InvalidOperationException($"找不到 {description} 补丁目标或回调。");
+        }
+
+        harmony.Patch(original, prefix: new HarmonyMethod(prefix));
     }
 
     private static void PatchOptional(

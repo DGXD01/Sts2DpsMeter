@@ -33,7 +33,7 @@
 - 卡牌、遗物、药水、状态和机制伤害统一并入玩家造成伤害的来源划分；卡牌按稳定卡牌 ID 聚合，同名卡牌合并为一个统计类型。
 - 已补充静默猎手单人卡牌的静态伤害路径覆盖：88 张卡牌中 27 张直接伤害卡，Shiv 独立统计，中毒来源暂为 `Deferred`，Abrasive/Outbreak/SerpentForm/Speedster/Strangle 的能力伤害按对应规则归因；详见 [docs/静默猎手伤害覆盖.md](docs/静默猎手伤害覆盖.md)。
 - 已补充储君单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 32 张直接伤害卡、`SovereignBlade` / `MinionStrike` / `MinionDiveBomb` 派生统计，以及 `BlackHolePower` / `ReflectPower` 两条能力间接伤害；详见 [docs/储君伤害覆盖.md](docs/储君伤害覆盖.md)。
-- 已补充亡魂契约师单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 24 张直接伤害卡、12 张 Osty 攻击卡和 `SweepingGaze` Token，补充 `HauntPower` / `NecroMasteryPower` / `SleightOfFleshPower` 三条唯一来源映射，并明确 Doom 击杀不计入伤害事件；详见 [docs/亡魂契约师伤害覆盖.md](docs/亡魂契约师伤害覆盖.md)。
+- 已补充亡魂契约师单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 24 张直接伤害卡、12 张 Osty 攻击卡和 `SweepingGaze` Token，补充 `HauntPower` / `NecroMasteryPower` / `SleightOfFleshPower` 三条唯一来源映射，并新增灾厄击杀统计：仅当灾厄层数达到敌方当前生命值且实际触发击杀时，按击杀前 HP 记入 Mod 统计，不修改游戏战斗数值；详见 [docs/亡魂契约师伤害覆盖.md](docs/亡魂契约师伤害覆盖.md)。
 - 已补充故障机器人单人卡牌的静态伤害路径覆盖：核对 88 张卡牌，整理 29 张直接伤害卡、20 张通道卡、4 张激发卡和 Lightning / Dark / Glass 充能球伤害，并补充 `HailstormPower` / `SmokestackPower` / `ThunderPower` 三条能力间接伤害映射；详见 [docs/故障机器人伤害覆盖.md](docs/故障机器人伤害覆盖.md)。
 - HUD 不使用键盘热键；所有交互控件禁用键盘焦点并仅响应鼠标，点击标题栏的“设”按钮打开或关闭设置面板，未锁定时可拖动 HUD 并保存位置。
 - HUD 支持 `50%` 至 `200%` 缩放，只通过设置面板中的“界面缩放”滑块调整，不使用鼠标滚轮组合键。
@@ -189,10 +189,10 @@ README.md
 
 - 尚未在游戏内完成单人和多人战斗验证，面板布局和事件时序仍可能调整。
 - `AfterDamageGiven`、`DamageResult`、事件签名已用 `0.107.1` 的 `sts2.dll` 编译验证，但还需要运行态验证。
-- 已实现模型栈、最近模型和 `PowerModel.Applier` 回退，但中毒、末日、反伤和敌方施加状态仍需要按真实战斗日志核对。
+- 已实现模型栈、最近模型和 `PowerModel.Applier` 回退，但中毒、灾厄、反伤和敌方施加状态仍需要按真实战斗日志核对。
 - 静默猎手单人卡牌的静态路径已整理，但 88 张卡牌、27 张直接伤害卡、Shiv 派生伤害、`ThornsPower` 混合来源和四种能力间接伤害仍需按真实战斗逐项验证。
 - 储君单人卡牌的静态路径已整理，但 88 张卡牌、32 张直接伤害卡、锻造/重放/生成派生和 `BlackHolePower` / `ReflectPower` 仍需按真实战斗逐项验证。
-- 亡魂契约师单人卡牌的静态路径已整理，但 88 张卡牌、24 张直接伤害卡、12 张 Osty 攻击卡、`SweepingGaze` 派生、三条能力来源映射和 Doom 击杀口径仍需按真实战斗逐项验证。
+- 亡魂契约师单人卡牌的静态路径已整理，但 88 张卡牌、24 张直接伤害卡、12 张 Osty 攻击卡、`SweepingGaze` 派生、三条能力来源映射和 Doom 击杀归属/重复计数仍需按真实战斗逐项验证。
 - 故障机器人单人卡牌的静态路径已整理，但 88 张卡牌、29 张直接伤害卡、充能球被动/激发、通道与能力触发、`HailstormPower` / `SmokestackPower` / `ThunderPower` 三条来源映射仍需按真实战斗逐项验证。
 - 中毒当前只按独立机制统计，具体施毒来源保留为 `Deferred`，尚未标记施毒者。
 - HUD 在每次成功记录伤害后的下一帧立即重建统计模块，并保留 0.25 秒轮询用于计时数值兜底；长时间或高频连锁伤害战斗需要观察性能和拖动手感。

@@ -18,8 +18,9 @@
 - 补充静默猎手运行态验证清单：覆盖 `Abrasive`、`ThornsPower`、能力间接伤害、Shiv 修正和中毒来源边界。
 - 新增亡魂契约师单人卡牌静态伤害覆盖与 [亡魂契约师伤害覆盖](docs/亡魂契约师伤害覆盖.md)：核对 88 张卡牌，整理 24 张直接伤害卡、12 张 Osty 攻击卡和 `SweepingGaze` 派生 Token。
 - 为亡魂契约师 `Haunt`、`NecroMastery`、`SleightOfFlesh` 补充 `HauntPower`、`NecroMasteryPower`、`SleightOfFleshPower` 的唯一来源映射。
-- 明确亡魂契约师 Doom 击杀走 `CreatureCmd.Kill`，不产生标准伤害事件；`BlightStrike`、`TimesUp` 的直接伤害仍按卡牌统计。
-- 补充亡魂契约师运行态验证清单：覆盖直接伤害、Osty 攻击、能力间接伤害、`SweepingGaze`、`Soul`、`Undeath`、Osty 死亡自损边界和 Doom 口径。
+- 新增灾厄击杀统计：在 `DoomPower.DoomKill` 执行前确认灾厄层数已达到敌方当前生命值并捕获击杀前 HP，在 `AfterDiedToDoom` 中作为一次不可格挡、未修正伤害写入 Mod 统计；不修改游戏伤害、击杀和战斗流程。
+- `BlightStrike`、`TimesUp` 等直接伤害仍按卡牌统计；若目标随后触发灾厄击杀，再按击杀前 HP 额外记录一次灾厄击杀。
+- 补充亡魂契约师运行态验证清单：覆盖直接伤害、Osty 攻击、能力间接伤害、`SweepingGaze`、`Soul`、`Undeath`、Osty 死亡自损边界，以及灾厄多目标/来源混合/战斗结束/复活后的归属和重复计数。
 - 新增故障机器人单人卡牌静态伤害覆盖与 [故障机器人伤害覆盖](docs/故障机器人伤害覆盖.md)：核对 88 张卡牌，整理 29 张直接伤害卡、20 张通道卡、4 张激发卡和 Lightning / Dark / Glass 充能球伤害路径。
 - 为故障机器人 `Hailstorm`、`Smokestack`、`Thunder` 补充 `HailstormPower`、`SmokestackPower`、`ThunderPower` 三条唯一来源映射。
 - 补充故障机器人运行态验证清单：覆盖直接伤害、充能球被动与激发、通道与能力触发、自动出牌、生成牌和状态牌边界。

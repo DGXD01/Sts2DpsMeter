@@ -7,6 +7,7 @@ using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.Models.Powers;
 using MegaCrit.Sts2.Core.ValueProps;
 
 namespace Sts2DpsMeter;
@@ -16,6 +17,7 @@ public static class DpsStats
     private const string UnknownSource = "其他";
     private static readonly object SyncRoot = new();
     private static readonly Dictionary<ulong, PlayerAccumulator> Players = new();
+    private static readonly Dictionary<Creature, DoomKillCapture> PendingDoomKills = new();
 
     private static bool _active;
     private static double _elapsedSeconds;
@@ -26,6 +28,7 @@ public static class DpsStats
         lock (SyncRoot)
         {
             Players.Clear();
+            PendingDoomKills.Clear();
             _active = false;
             _elapsedSeconds = 0;
             _currentTurn = 1;
@@ -37,6 +40,7 @@ public static class DpsStats
         lock (SyncRoot)
         {
             Players.Clear();
+            PendingDoomKills.Clear();
             _active = true;
             _elapsedSeconds = 0;
             _currentTurn = 1;
@@ -47,6 +51,7 @@ public static class DpsStats
     {
         lock (SyncRoot)
         {
+            PendingDoomKills.Clear();
             _active = false;
         }
     }
@@ -80,6 +85,84 @@ public static class DpsStats
         }
     }
 
+    public static void CaptureDoomKills(IReadOnlyList<Creature> creatures)
+    {
+        lock (SyncRoot)
+        {
+            foreach (var creature in creatures)
+            {
+                if (!creature.IsEnemy || creature.IsDead || creature.CurrentHp <= 0)
+                {
+                    continue;
+                }
+
+                var power = creature.GetPower<DoomPower>();
+                if (power is null || !power.IsOwnerDoomed())
+                {
+                    continue;
+                }
+
+                PendingDoomKills[creature] = new DoomKillCapture(
+                    creature,
+                    creature.CurrentHp,
+                    power);
+            }
+        }
+    }
+
+    public static bool RecordDoomKills(IReadOnlyList<Creature> creatures)
+    {
+        var captures = new List<DoomKillCapture>();
+        lock (SyncRoot)
+        {
+            foreach (var creature in creatures)
+            {
+                if (PendingDoomKills.Remove(creature, out var capture))
+                {
+                    captures.Add(capture);
+                }
+            }
+        }
+
+        var recorded = false;
+        foreach (var capture in captures)
+        {
+            if (!capture.Target.IsDead || capture.HealthBeforeKill <= 0)
+            {
+                continue;
+            }
+
+            var attribution = DpsAttribution.ResolveDoomKill(capture.Power, capture.Target);
+            if (attribution is null)
+            {
+                continue;
+            }
+
+            var player = ResolveRecordedPlayer(attribution, capture.Power.Applier, capture.Target);
+            if (player is null)
+            {
+                continue;
+            }
+
+            var result = new DamageResult(
+                capture.Target,
+                ValueProp.Unblockable | ValueProp.Unpowered)
+            {
+                BlockedDamage = 0,
+                UnblockedDamage = capture.HealthBeforeKill,
+                OverkillDamage = 0,
+                WasTargetKilled = true
+            };
+
+            if (RecordDamage(player, attribution, result, capture.HealthBeforeKill))
+            {
+                recorded = true;
+            }
+        }
+
+        return recorded;
+    }
+
     public static bool Record(
         PlayerChoiceContext choiceContext,
         Creature? dealer,
@@ -106,6 +189,15 @@ public static class DpsStats
             return false;
         }
 
+        return RecordDamage(player, attribution, result, damage);
+    }
+
+    private static bool RecordDamage(
+        Player player,
+        DamageAttribution attribution,
+        DamageResult result,
+        int damage)
+    {
         lock (SyncRoot)
         {
             if (!_active)
@@ -483,6 +575,11 @@ public static class DpsStats
 
         public Dictionary<int, Dictionary<DamageMechanismKind, MechanismAccumulator>> DamageByMechanismByTurn { get; } = new();
     }
+
+    private sealed record DoomKillCapture(
+        Creature Target,
+        int HealthBeforeKill,
+        DoomPower Power);
 
     private sealed record OutputGroupIdentity(
         string GroupId,

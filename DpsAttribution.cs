@@ -314,6 +314,34 @@ public static class DpsAttribution
             poisonSource,
             accountablePlayer);
     }
+    public static DamageAttribution? ResolveDoomKill(DoomPower power, Creature target)
+    {
+        if (!target.IsEnemy)
+        {
+            return null;
+        }
+
+        var accountablePlayer = GetPlayerForCreature(power.Applier);
+        if (accountablePlayer is null)
+        {
+            return null;
+        }
+
+        var triggerCard = ResolvePowerOriginCardInfo(power);
+        return new DamageAttribution(
+            GetModelTitle(power),
+            GetModelInternalId(power),
+            DamageSourceType.Power,
+            DamageCategory.Output,
+            AttributionConfidence.Exact,
+            DamageMechanismKind.PowerEffect,
+            SourceTrackingStatus.Tracked,
+            triggerCard?.DisplayName,
+            triggerCard?.InternalId,
+            "灾厄击杀",
+            null,
+            accountablePlayer);
+    }
     private static AbstractModel? SelectDirectModel(IReadOnlyList<AbstractModel> chain)
     {
         foreach (var model in chain)
@@ -593,9 +621,11 @@ public static class DpsAttribution
     public static void RecordPowerOrigin(PowerModel power, CardModel? cardSource)
     {
         var powerName = power.GetType().Name;
-        if (powerName == "PoisonPower"
-            || !DamagePowerNames.Contains(powerName)
-            || cardSource is null && !AmbiguousPowerNames.Contains(powerName))
+        var isDoomPower = power is DoomPower;
+        var tracksPowerOrigin = isDoomPower
+            || DamagePowerNames.Contains(powerName)
+            && (cardSource is not null || AmbiguousPowerNames.Contains(powerName));
+        if (powerName == "PoisonPower" || !tracksPowerOrigin)
         {
             return;
         }
