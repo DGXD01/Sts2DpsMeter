@@ -5,7 +5,9 @@ using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
+using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
+using MegaCrit.Sts2.Core.ValueProps;
 
 namespace Sts2DpsMeter;
 
@@ -78,31 +80,31 @@ public static class DpsStats
         }
     }
 
-    public static void Record(Creature? dealer, Creature receiver, DamageResult result, CardModel? cardSource)
+    public static void Record(
+        PlayerChoiceContext choiceContext,
+        Creature? dealer,
+        Creature target,
+        DamageResult result,
+        ValueProp props,
+        CardModel? cardSource)
     {
-        if (dealer is null || !receiver.IsEnemy)
-        {
-            return;
-        }
-
-        if (!dealer.IsPlayer && !dealer.IsPet)
-        {
-            return;
-        }
-
-        var player = dealer.IsPlayer ? dealer.Player : dealer.PetOwner;
-        if (player is null)
-        {
-            return;
-        }
-
         var damage = result.BlockedDamage + result.UnblockedDamage + result.OverkillDamage;
         if (damage <= 0)
         {
             return;
         }
 
-        var source = ResolveSource(dealer, cardSource);
+        var attribution = DpsAttribution.Resolve(choiceContext, dealer, target, result, props, cardSource);
+        if (attribution.Category == DamageCategory.Ignored)
+        {
+            return;
+        }
+
+        var player = ResolveRecordedPlayer(attribution, dealer, target);
+        if (player is null)
+        {
+            return;
+        }
 
         lock (SyncRoot)
         {
@@ -118,18 +120,50 @@ public static class DpsStats
             }
 
             stats.DisplayName = ResolvePlayerName(player);
-            stats.TotalDamage += damage;
-            stats.HitCount++;
 
-            if (damage > stats.MaxHit)
+            var sourceStats = attribution.Category switch
             {
-                stats.MaxHit = damage;
-                stats.MaxHitSource = source;
+                DamageCategory.Output => stats.DamageBySource,
+                DamageCategory.Incoming => stats.IncomingBySource,
+                DamageCategory.SelfLoss => stats.SelfLossBySource,
+                _ => stats.DamageBySource
+            };
+            var sourceKey = BuildSourceKey(attribution);
+            if (!sourceStats.TryGetValue(sourceKey, out var source))
+            {
+                source = new SourceAccumulator(attribution);
+                sourceStats.Add(sourceKey, source);
             }
 
-            stats.DamageBySource[source] = stats.DamageBySource.GetValueOrDefault(source) + damage;
-            stats.DamageByTurn[_currentTurn] =
-                stats.DamageByTurn.GetValueOrDefault(_currentTurn) + damage;
+            source.Add(damage, result);
+
+            switch (attribution.Category)
+            {
+                case DamageCategory.Output:
+                    stats.TotalDamage += damage;
+                    stats.EffectiveHpDamage += result.UnblockedDamage;
+                    stats.BlockedDamage += result.BlockedDamage;
+                    stats.UnblockedDamage += result.UnblockedDamage;
+                    stats.OverkillDamage += result.OverkillDamage;
+                    stats.HitCount++;
+                    if (damage > stats.MaxHit)
+                    {
+                        stats.MaxHit = damage;
+                        stats.MaxHitSource = attribution.DisplayName;
+                    }
+
+                    stats.DamageByTurn[_currentTurn] =
+                        stats.DamageByTurn.GetValueOrDefault(_currentTurn) + damage;
+                    break;
+                case DamageCategory.Incoming:
+                    stats.IncomingDamage += damage;
+                    stats.IncomingHits++;
+                    break;
+                case DamageCategory.SelfLoss:
+                    stats.SelfLossDamage += damage;
+                    stats.SelfLossHits++;
+                    break;
+            }
         }
     }
 
@@ -148,9 +182,28 @@ public static class DpsStats
                     player.MaxHitSource,
                     _elapsedSeconds > 0 ? player.TotalDamage / _elapsedSeconds : 0,
                     player.TotalDamage / (double)_currentTurn,
+                    player.EffectiveHpDamage,
+                    player.BlockedDamage,
+                    player.UnblockedDamage,
+                    player.OverkillDamage,
+                    player.IncomingDamage,
+                    player.SelfLossDamage,
+                    player.IncomingHits,
+                    player.SelfLossHits,
                     player.DamageBySource
-                        .OrderByDescending(pair => pair.Value)
-                        .Select(pair => new SourceStatsSnapshot(pair.Key, pair.Value))
+                        .Values
+                        .OrderByDescending(source => source.Damage)
+                        .Select(source => source.ToSnapshot())
+                        .ToArray(),
+                    player.IncomingBySource
+                        .Values
+                        .OrderByDescending(source => source.Damage)
+                        .Select(source => source.ToSnapshot())
+                        .ToArray(),
+                    player.SelfLossBySource
+                        .Values
+                        .OrderByDescending(source => source.Damage)
+                        .Select(source => source.ToSnapshot())
                         .ToArray(),
                     player.DamageByTurn
                         .OrderBy(pair => pair.Key)
@@ -170,15 +223,80 @@ public static class DpsStats
         foreach (var player in snapshot.Players)
         {
             GD.Print(
-                $"[{ModEntry.ModId}] {player.DisplayName}：总伤害 {player.TotalDamage}，" +
+                $"[{ModEntry.ModId}] {player.DisplayName}：输出 {player.TotalDamage}，" +
+                $"格挡 {player.BlockedDamage}，掉血 {player.EffectiveHpDamage}，过量 {player.OverkillDamage}，" +
                 $"命中 {player.HitCount}，最高单次 {player.MaxHit}（{player.MaxHitSource}），" +
-                $"DPS {player.Dps:F2}，DPT {player.Dpt:F2}");
+                $"DPS {player.Dps:F2}，DPT {player.Dpt:F2}，承伤 {player.IncomingDamage}，自损 {player.SelfLossDamage}");
 
-            foreach (var source in player.Sources.Take(5))
+            foreach (var source in player.Sources.Take(8))
             {
-                GD.Print($"[{ModEntry.ModId}]   来源 {source.Source}：{source.Damage}");
+                GD.Print($"[{ModEntry.ModId}]   输出来源 {FormatSource(source)}：{source.Damage}");
+            }
+
+            foreach (var source in player.IncomingSources.Take(5))
+            {
+                GD.Print($"[{ModEntry.ModId}]   承伤来源 {FormatSource(source)}：{source.Damage}");
+            }
+
+            foreach (var source in player.SelfLossSources.Take(5))
+            {
+                GD.Print($"[{ModEntry.ModId}]   自损来源 {FormatSource(source)}：{source.Damage}");
             }
         }
+    }
+
+    private static Player? ResolveRecordedPlayer(DamageAttribution attribution, Creature? dealer, Creature target)
+    {
+        if (attribution.Category == DamageCategory.Output)
+        {
+            return attribution.AccountablePlayer;
+        }
+
+        return GetPlayerForCreature(target)
+            ?? attribution.AccountablePlayer
+            ?? GetPlayerForCreature(dealer);
+    }
+
+    private static Player? GetPlayerForCreature(Creature? creature)
+    {
+        if (creature is null)
+        {
+            return null;
+        }
+
+        if (creature.IsPlayer)
+        {
+            return creature.Player;
+        }
+
+        return creature.IsPet ? creature.PetOwner : null;
+    }
+
+    private static string BuildSourceKey(DamageAttribution attribution)
+    {
+        return string.Join(
+            "|",
+            attribution.SourceType,
+            attribution.InternalId,
+            attribution.DisplayName,
+            attribution.TriggerCard ?? string.Empty,
+            attribution.SemanticTag ?? string.Empty);
+    }
+
+    private static string FormatSource(SourceStatsSnapshot source)
+    {
+        var parts = new List<string> { source.Source };
+        if (!string.IsNullOrWhiteSpace(source.SemanticTag))
+        {
+            parts.Add(source.SemanticTag);
+        }
+
+        if (!string.IsNullOrWhiteSpace(source.TriggerCard))
+        {
+            parts.Add($"触发卡牌：{source.TriggerCard}");
+        }
+
+        return string.Join(" / ", parts);
     }
 
     private static bool IsCombatClockRunning()
@@ -225,30 +343,6 @@ public static class DpsStats
         return $"玩家 {player.NetId}";
     }
 
-    private static string ResolveSource(Creature dealer, CardModel? cardSource)
-    {
-        if (dealer.IsPet)
-        {
-            var petName = dealer.Name;
-            return string.IsNullOrWhiteSpace(petName) ? "宠物" : $"宠物:{petName}";
-        }
-
-        try
-        {
-            var cardTitle = cardSource?.Title;
-            if (!string.IsNullOrWhiteSpace(cardTitle))
-            {
-                return cardTitle;
-            }
-        }
-        catch
-        {
-            // 某些临时卡牌可能没有可读取的本地化标题，归入其他来源。
-        }
-
-        return UnknownSource;
-    }
-
     private sealed class PlayerAccumulator
     {
         public PlayerAccumulator(ulong playerNetId, string displayName)
@@ -263,14 +357,80 @@ public static class DpsStats
 
         public long TotalDamage { get; set; }
 
+        public long EffectiveHpDamage { get; set; }
+
+        public long BlockedDamage { get; set; }
+
+        public long UnblockedDamage { get; set; }
+
+        public long OverkillDamage { get; set; }
+
+        public long IncomingDamage { get; set; }
+
+        public long SelfLossDamage { get; set; }
+
         public int HitCount { get; set; }
+
+        public int IncomingHits { get; set; }
+
+        public int SelfLossHits { get; set; }
 
         public int MaxHit { get; set; }
 
         public string MaxHitSource { get; set; } = UnknownSource;
 
-        public Dictionary<string, long> DamageBySource { get; } = new();
+        public Dictionary<string, SourceAccumulator> DamageBySource { get; } = new();
+
+        public Dictionary<string, SourceAccumulator> IncomingBySource { get; } = new();
+
+        public Dictionary<string, SourceAccumulator> SelfLossBySource { get; } = new();
 
         public Dictionary<int, long> DamageByTurn { get; } = new();
+    }
+
+    private sealed class SourceAccumulator
+    {
+        private readonly DamageAttribution _attribution;
+
+        public SourceAccumulator(DamageAttribution attribution)
+        {
+            _attribution = attribution;
+        }
+
+        public long Damage { get; private set; }
+
+        public long BlockedDamage { get; private set; }
+
+        public long UnblockedDamage { get; private set; }
+
+        public long OverkillDamage { get; private set; }
+
+        public int Hits { get; private set; }
+
+        public void Add(long damage, DamageResult result)
+        {
+            Damage += damage;
+            BlockedDamage += result.BlockedDamage;
+            UnblockedDamage += result.UnblockedDamage;
+            OverkillDamage += result.OverkillDamage;
+            Hits++;
+        }
+
+        public SourceStatsSnapshot ToSnapshot()
+        {
+            return new SourceStatsSnapshot(
+                _attribution.DisplayName,
+                Damage,
+                _attribution.InternalId,
+                _attribution.SourceType,
+                _attribution.Category,
+                _attribution.Confidence,
+                _attribution.TriggerCard,
+                _attribution.SemanticTag,
+                Hits,
+                BlockedDamage,
+                UnblockedDamage,
+                OverkillDamage);
+        }
     }
 }

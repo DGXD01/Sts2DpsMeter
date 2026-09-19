@@ -27,7 +27,7 @@ public sealed class DpsHook : AbstractModel
     {
         try
         {
-            DpsStats.Record(dealer, target, result, cardSource);
+            DpsStats.Record(choiceContext, dealer, target, result, props, cardSource);
         }
         catch (Exception exception)
         {

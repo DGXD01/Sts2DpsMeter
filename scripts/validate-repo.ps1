@@ -88,6 +88,8 @@ else {
 $requiredPaths = @(
     (Join-Path $repoRoot 'ModEntry.cs'),
     (Join-Path $repoRoot 'DpsHook.cs'),
+    (Join-Path $repoRoot 'DpsAttribution.cs'),
+    (Join-Path $repoRoot 'DpsSourceContext.cs'),
     (Join-Path $repoRoot 'DpsStats.cs'),
     (Join-Path $repoRoot 'DpsModels.cs'),
     (Join-Path $repoRoot 'DpsMeterUi.cs'),

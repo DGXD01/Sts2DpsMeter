@@ -88,11 +88,35 @@ public static class DpsMeterUi
                     $"{player.DisplayName}  |  总伤害 {player.TotalDamage}  " +
                     $"DPS {player.Dps:F1}  DPT {player.Dpt:F1}  命中 {player.HitCount}  " +
                     $"最高 {player.MaxHit}");
+                text.AppendLine(
+                    $"  有效掉血 {player.EffectiveHpDamage}  |  格挡 {player.BlockedDamage}  |  " +
+                    $"未格挡 {player.UnblockedDamage}  |  过量 {player.OverkillDamage}");
+                lineCount += 2;
 
                 foreach (var source in player.Sources.Take(4))
                 {
-                    text.AppendLine($"  来源 {source.Source}：{source.Damage}");
+                    text.AppendLine($"  输出 {FormatSource(source)}：{source.Damage}");
                     lineCount++;
+                }
+
+                if (player.IncomingDamage > 0 || player.SelfLossDamage > 0)
+                {
+                    text.AppendLine(
+                        $"  承伤 {player.IncomingDamage}（{player.IncomingHits} 次）  |  " +
+                        $"自损 {player.SelfLossDamage}（{player.SelfLossHits} 次）");
+                    lineCount++;
+
+                    foreach (var source in player.IncomingSources.Take(2))
+                    {
+                        text.AppendLine($"  承伤来源 {FormatSource(source)}：{source.Damage}");
+                        lineCount++;
+                    }
+
+                    foreach (var source in player.SelfLossSources.Take(2))
+                    {
+                        text.AppendLine($"  自损来源 {FormatSource(source)}：{source.Damage}");
+                        lineCount++;
+                    }
                 }
 
                 var turns = string.Join(" / ", player.Turns.Select(turn => $"T{turn.Turn}:{turn.Damage}"));
@@ -102,13 +126,13 @@ public static class DpsMeterUi
                     lineCount++;
                 }
 
-                lineCount += 2;
+                lineCount++;
             }
 
             _body!.Text = text.ToString().TrimEnd();
             if (IsAlive(_panel))
             {
-                _panel!.Size = new Vector2(620, Mathf.Max(170, 105 + lineCount * 18));
+                _panel!.Size = new Vector2(720, Mathf.Max(190, 115 + lineCount * 18));
             }
         }
     }
@@ -131,8 +155,8 @@ public static class DpsMeterUi
         {
             Name = "Sts2DpsMeterPanel",
             Position = new Vector2(18, 18),
-            Size = new Vector2(620, 170),
-            CustomMinimumSize = new Vector2(620, 170),
+            Size = new Vector2(720, 190),
+            CustomMinimumSize = new Vector2(720, 190),
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
 
@@ -184,6 +208,44 @@ public static class DpsMeterUi
         };
         _body.AddThemeColorOverride("font_color", new Color(0.9f, 0.94f, 1f));
         layout.AddChild(_body);
+    }
+
+    private static string FormatSource(SourceStatsSnapshot source)
+    {
+        var parts = new System.Collections.Generic.List<string>
+        {
+            GetSourceTypeLabel(source.SourceType),
+            source.Source
+        };
+
+        if (!string.IsNullOrWhiteSpace(source.SemanticTag))
+        {
+            parts.Add(source.SemanticTag);
+        }
+
+        if (!string.IsNullOrWhiteSpace(source.TriggerCard))
+        {
+            parts.Add($"触发卡牌：{source.TriggerCard}");
+        }
+
+        return string.Join(" / ", parts);
+    }
+
+    private static string GetSourceTypeLabel(DamageSourceType sourceType)
+    {
+        return sourceType switch
+        {
+            DamageSourceType.Card => "卡牌",
+            DamageSourceType.Power => "状态",
+            DamageSourceType.Relic => "遗物",
+            DamageSourceType.Potion => "药水",
+            DamageSourceType.Orb => "充能球",
+            DamageSourceType.Pet => "宠物",
+            DamageSourceType.Enemy => "敌方",
+            DamageSourceType.Event => "事件",
+            DamageSourceType.Self => "自损",
+            _ => "未知"
+        };
     }
 
     private static bool IsAlive(GodotObject? value)

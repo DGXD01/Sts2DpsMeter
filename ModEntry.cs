@@ -22,6 +22,8 @@ public static class ModEntry
 
         _initialized = true;
 
+        DpsSourceContext.Initialize();
+
         ModHelper.SubscribeForCombatStateHooks(
             ModId,
             _ => new[] { DpsHook.GetCanonical() });
