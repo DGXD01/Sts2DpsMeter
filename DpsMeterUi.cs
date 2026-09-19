@@ -34,6 +34,7 @@ public static class DpsMeterUi
     private static Button? _previousPlayerButton;
     private static Button? _nextPlayerButton;
     private static OptionButton? _scopeOption;
+    private static Button? _settingsButton;
     private static Button? _collapseButton;
     private static Control? _contentDivider;
     private static DpsMeterHost? _host;
@@ -46,8 +47,6 @@ public static class DpsMeterUi
     private static int _immediateRefreshRequested;
     private static int _deferredRefreshQueued;
     private static int _deferredPanelFitQueued;
-
-    public static bool IsVisible => _visible;
 
     public static void EnsureAttached()
     {
@@ -112,6 +111,7 @@ public static class DpsMeterUi
             !IsAlive(_moduleGrid) ||
             !IsAlive(_header) ||
             !IsAlive(_scopeOption) ||
+            !IsAlive(_settingsButton) ||
             !IsAlive(_collapseButton) ||
             !IsAlive(_contentDivider))
         {
@@ -235,23 +235,6 @@ public static class DpsMeterUi
     {
         Interlocked.Exchange(ref _deferredPanelFitQueued, 0);
         FitPanelToContent(DpsMeterSettings.Current);
-    }
-
-    public static void ToggleVisibility()
-    {
-        if (!IsAlive(_canvas))
-        {
-            return;
-        }
-
-        _visible = !_visible;
-        _panel!.Visible = _visible;
-        GD.Print($"[{ModEntry.ModId}] 统计面板：{(_visible ? "显示" : "隐藏")}");
-    }
-
-    public static void ShowSettings()
-    {
-        DpsMeterSettingsUi.ToggleVisibility();
     }
 
     private static DamageViewData BuildDamageView(
@@ -528,6 +511,11 @@ public static class DpsMeterUi
         Refresh();
     }
 
+    private static void OnSettingsPressed()
+    {
+        DpsMeterSettingsUi.ToggleVisibility();
+    }
+
     private static void OnCollapsePressed()
     {
         _contentCollapsed = !_contentCollapsed;
@@ -693,6 +681,7 @@ public static class DpsMeterUi
 
         _scopeOption = new OptionButton
         {
+            FocusMode = Control.FocusModeEnum.None,
             CustomMinimumSize = new Vector2(88, 30),
             MouseFilter = Control.MouseFilterEnum.Stop,
             TooltipText = "选择伤害统计范围"
@@ -708,6 +697,10 @@ public static class DpsMeterUi
         _scopeOption.AddThemeFontSizeOverride("font_size", 12);
         ApplyDropdownStyle(_scopeOption);
         headerRow.AddChild(_scopeOption);
+
+        _settingsButton = CreateArrowButton("设", OnSettingsPressed);
+        _settingsButton.TooltipText = "打开设置";
+        headerRow.AddChild(_settingsButton);
 
         _collapseButton = CreateArrowButton(_contentCollapsed ? "+" : "−", OnCollapsePressed);
         _collapseButton.TooltipText = _contentCollapsed ? "展开伤害明细" : "收起伤害明细";
@@ -799,21 +792,6 @@ public static class DpsMeterUi
         var settings = DpsMeterSettings.Current;
         if (@event is InputEventMouseButton mouseButton)
         {
-            if (mouseButton.Pressed &&
-                mouseButton.CtrlPressed &&
-                mouseButton.ButtonIndex is MouseButton.WheelUp or MouseButton.WheelDown)
-            {
-                var step = mouseButton.ButtonIndex == MouseButton.WheelUp
-                    ? DpsMeterSettings.UiScaleStep
-                    : -DpsMeterSettings.UiScaleStep;
-                settings.UiScale = DpsMeterSettings.ClampUiScale(settings.UiScale + step);
-                DpsMeterSettings.Save();
-                Refresh();
-                DpsMeterSettingsUi.Refresh();
-                _panel!.AcceptEvent();
-                return;
-            }
-
             if (settings.LockPosition)
             {
                 return;
@@ -877,23 +855,6 @@ internal sealed class DpsMeterHost : Node
 {
     private double _refreshTimer;
 
-    public override void _Input(InputEvent @event)
-    {
-        if (@event is not InputEventKey key || !key.Pressed || key.Echo)
-        {
-            return;
-        }
-
-        if (IsKey(key, Key.F8))
-        {
-            DpsMeterUi.ToggleVisibility();
-        }
-        else if (IsKey(key, Key.F7))
-        {
-            DpsMeterUi.ShowSettings();
-        }
-    }
-
     public override void _Process(double delta)
     {
         DpsStats.Tick(delta);
@@ -907,8 +868,4 @@ internal sealed class DpsMeterHost : Node
         }
     }
 
-    private static bool IsKey(InputEventKey key, Key expected)
-    {
-        return key.PhysicalKeycode == expected || key.Keycode == expected;
-    }
 }

@@ -101,7 +101,7 @@ public static class DpsMeterSettingsUi
 
         var title = new Label
         {
-            Text = "Sts2 DPS Meter 设置  |  F7 关闭",
+            Text = "Sts2 DPS Meter 设置",
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         title.AddThemeColorOverride("font_color", HeadingColor);
@@ -110,7 +110,7 @@ public static class DpsMeterSettingsUi
 
         var introduction = new Label
         {
-            Text = "伤害发生后立即刷新。标题左右箭头切换玩家，右上角下拉框选择统计范围或“同时”，最右侧 +/- 折叠明细。",
+            Text = "伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；标题左右箭头切换玩家，右上角下拉框选择统计范围或“同时”，最右侧 +/- 折叠明细。",
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
@@ -191,10 +191,11 @@ public static class DpsMeterSettingsUi
             settings.UiScale = DpsMeterSettings.ClampUiScale((float)value);
             SaveAndRefresh();
         });
-        AddText("快捷缩放：按住 Ctrl 并将鼠标移到 HUD 上滚动滚轮。", MutedColor, 11);
+        AddText("界面缩放仅通过上方滑块调整，不注册键盘或鼠标滚轮热键。", MutedColor, 11);
 
         var resetScale = new Button
         {
+            FocusMode = Control.FocusModeEnum.None,
             Text = "重置 HUD 大小（100%）"
         };
         resetScale.Pressed += () =>
@@ -207,6 +208,7 @@ public static class DpsMeterSettingsUi
         AddSection("位置");
         var resetPosition = new Button
         {
+            FocusMode = Control.FocusModeEnum.None,
             Text = "重置 HUD 位置到左上角",
             TooltipText = "默认位置为 (18, 18)；HUD 未锁定时可直接拖动。"
         };
@@ -221,6 +223,7 @@ public static class DpsMeterSettingsUi
         AddSection("操作");
         var resetAll = new Button
         {
+            FocusMode = Control.FocusModeEnum.None,
             Text = "恢复全部推荐值"
         };
         resetAll.Pressed += () =>
@@ -233,7 +236,8 @@ public static class DpsMeterSettingsUi
 
         var close = new Button
         {
-            Text = "关闭设置面板（F7）"
+            FocusMode = Control.FocusModeEnum.None,
+            Text = "关闭设置面板"
         };
         close.Pressed += () => ToggleVisibility();
         _content!.AddChild(close);
@@ -258,6 +262,7 @@ public static class DpsMeterSettingsUi
     {
         var toggle = new CheckBox
         {
+            FocusMode = Control.FocusModeEnum.None,
             Text = title,
             ButtonPressed = value
         };
@@ -270,6 +275,7 @@ public static class DpsMeterSettingsUi
         var row = CreateRow(title);
         var option = new OptionButton
         {
+            FocusMode = Control.FocusModeEnum.None,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
         };
         foreach (var item in options)
@@ -303,6 +309,7 @@ public static class DpsMeterSettingsUi
 
         var slider = new HSlider
         {
+            FocusMode = Control.FocusModeEnum.None,
             MinValue = min,
             MaxValue = max,
             Step = step,

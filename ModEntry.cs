@@ -32,7 +32,7 @@ public static class ModEntry
         CombatManager.Instance.CombatSetUp += OnCombatSetUp;
         CombatManager.Instance.CombatEnded += OnCombatEnded;
 
-        GD.Print($"[{ModId}] 已初始化，战斗中按 F7 打开设置，按 F8 显示或隐藏 DPS 面板");
+        GD.Print($"[{ModId}] 已初始化，点击 HUD 的“设”按钮可打开设置面板");
     }
 
     private static void OnRunStarted(RunState state)
