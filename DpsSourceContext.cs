@@ -21,6 +21,8 @@ public static class DpsSourceContext
     private static readonly Stopwatch RecentTimer = Stopwatch.StartNew();
     private static AbstractModel? _recentModel;
     private static long _recentModelTimestamp;
+    private static OrbModel? _recentOrb;
+    private static long _recentOrbTimestamp;
     private static bool _initialized;
 
     public static void Initialize()
@@ -142,6 +144,29 @@ public static class DpsSourceContext
         }
     }
 
+    public static void RecordRecentOrb(OrbModel orb)
+    {
+        lock (SyncRoot)
+        {
+            _recentOrb = orb;
+            _recentOrbTimestamp = RecentTimer.ElapsedTicks;
+        }
+    }
+
+    public static OrbModel? GetRecentOrb()
+    {
+        lock (SyncRoot)
+        {
+            if (_recentOrb is null)
+            {
+                return null;
+            }
+
+            var age = TimeSpan.FromTicks(RecentTimer.ElapsedTicks - _recentOrbTimestamp);
+            return age <= TimeSpan.FromMilliseconds(500) ? _recentOrb : null;
+        }
+    }
+
     private static void PushModelPostfix(PlayerChoiceContext __instance, AbstractModel model)
     {
         Push(__instance, model);
@@ -164,7 +189,7 @@ public static class DpsSourceContext
 
     private static void OrbTriggerPostfix(OrbModel __instance)
     {
-        RecordRecentModel(__instance);
+        RecordRecentOrb(__instance);
     }
 
     private static void DoomKillPrefix(IReadOnlyList<Creature> creatures)

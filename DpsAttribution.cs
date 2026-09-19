@@ -179,6 +179,13 @@ public static class DpsAttribution
             directFromGameStack = true;
         }
 
+        // 回合结束球体被动不经 OrbCmd，使用 Trigger 后保存的独立近时来源。
+        if (directModel is null && props.HasFlag(ValueProp.Unpowered))
+        {
+            directModel = DpsSourceContext.GetRecentOrb();
+            directFromGameStack = directModel is not null;
+        }
+
         if (directModel is null)
         {
             directModel = DpsSourceContext.GetRecentModel<PowerModel>();
@@ -192,11 +199,6 @@ public static class DpsAttribution
         if (directModel is null)
         {
             directModel = DpsSourceContext.GetRecentModel<PotionModel>();
-        }
-
-        if (directModel is null)
-        {
-            directModel = DpsSourceContext.GetRecentModel<OrbModel>();
         }
 
         if (directModel is null)
