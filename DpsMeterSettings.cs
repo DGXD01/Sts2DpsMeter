@@ -8,23 +8,14 @@ namespace Sts2DpsMeter;
 
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 1;
+    public int SchemaVersion { get; set; } = 2;
     public bool StartVisible { get; set; } = true;
     public bool LockPosition { get; set; }
     public bool CompactMode { get; set; }
-    public bool ShowSummary { get; set; } = true;
-    public bool ShowRanking { get; set; } = true;
-    public bool ShowCoreMetrics { get; set; } = true;
-    public bool ShowDamageBreakdown { get; set; } = true;
-    public bool ShowSources { get; set; } = true;
-    public bool ShowTurns { get; set; } = true;
-    public bool ShowCards { get; set; } = true;
-    public bool ShowMechanisms { get; set; } = true;
-    public bool ShowIncoming { get; set; } = true;
-    public bool ShowSelfLoss { get; set; } = true;
+    public bool ShowDealtBreakdown { get; set; } = true;
+    public bool ShowTakenBreakdown { get; set; } = true;
     public int Columns { get; set; } = 2;
     public int MaxRows { get; set; } = 5;
-    public int MaxTurns { get; set; } = 8;
     public float PanelOpacity { get; set; } = 0.92f;
     public float UiScale { get; set; } = 1.0f;
     public float PositionX { get; set; } = 18f;
@@ -33,7 +24,7 @@ public sealed class DpsMeterSettingsData
 
 public static class DpsMeterSettings
 {
-    private const int CurrentSchemaVersion = 1;
+    private const int CurrentSchemaVersion = 2;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -147,19 +138,10 @@ public static class DpsMeterSettings
             StartVisible = source.StartVisible,
             LockPosition = source.LockPosition,
             CompactMode = source.CompactMode,
-            ShowSummary = source.ShowSummary,
-            ShowRanking = source.ShowRanking,
-            ShowCoreMetrics = source.ShowCoreMetrics,
-            ShowDamageBreakdown = source.ShowDamageBreakdown,
-            ShowSources = source.ShowSources,
-            ShowTurns = source.ShowTurns,
-            ShowCards = source.ShowCards,
-            ShowMechanisms = source.ShowMechanisms,
-            ShowIncoming = source.ShowIncoming,
-            ShowSelfLoss = source.ShowSelfLoss,
+            ShowDealtBreakdown = source.ShowDealtBreakdown,
+            ShowTakenBreakdown = source.ShowTakenBreakdown,
             Columns = source.Columns,
             MaxRows = source.MaxRows,
-            MaxTurns = source.MaxTurns,
             PanelOpacity = source.PanelOpacity,
             UiScale = source.UiScale,
             PositionX = source.PositionX,
@@ -170,9 +152,8 @@ public static class DpsMeterSettings
     private static void Normalize(DpsMeterSettingsData settings)
     {
         settings.SchemaVersion = CurrentSchemaVersion;
-        settings.Columns = Math.Clamp(settings.Columns, 1, 3);
+        settings.Columns = Math.Clamp(settings.Columns, 1, 2);
         settings.MaxRows = Math.Clamp(settings.MaxRows, 1, MaxRowsLimit);
-        settings.MaxTurns = Math.Clamp(settings.MaxTurns, 1, 20);
         settings.PanelOpacity = Math.Clamp(settings.PanelOpacity, 0.35f, 1f);
         settings.UiScale = Math.Clamp(settings.UiScale, 0.75f, 1.35f);
         settings.PositionX = Math.Max(0f, settings.PositionX);

@@ -155,78 +155,34 @@ public static class DpsMeterSettingsUi
             SaveAndRefresh();
         });
 
-        AddSection("模块拼接");
-        AddToggle("战斗概要", settings.ShowSummary, value =>
+        AddSection("统计模块");
+        AddToggle("玩家造成伤害", settings.ShowDealtBreakdown, value =>
         {
-            settings.ShowSummary = value;
+            settings.ShowDealtBreakdown = value;
             SaveAndRefresh();
         });
-        AddToggle("玩家排行（rDPS 风格）", settings.ShowRanking, value =>
+        AddToggle("玩家受到伤害", settings.ShowTakenBreakdown, value =>
         {
-            settings.ShowRanking = value;
-            SaveAndRefresh();
-        });
-        AddToggle("核心指标", settings.ShowCoreMetrics, value =>
-        {
-            settings.ShowCoreMetrics = value;
-            SaveAndRefresh();
-        });
-        AddToggle("伤害拆分", settings.ShowDamageBreakdown, value =>
-        {
-            settings.ShowDamageBreakdown = value;
-            SaveAndRefresh();
-        });
-        AddToggle("输出来源", settings.ShowSources, value =>
-        {
-            settings.ShowSources = value;
-            SaveAndRefresh();
-        });
-        AddToggle("逐回合伤害", settings.ShowTurns, value =>
-        {
-            settings.ShowTurns = value;
-            SaveAndRefresh();
-        });
-        AddToggle("卡牌伤害", settings.ShowCards, value =>
-        {
-            settings.ShowCards = value;
-            SaveAndRefresh();
-        });
-        AddToggle("机制伤害（含中毒）", settings.ShowMechanisms, value =>
-        {
-            settings.ShowMechanisms = value;
-            SaveAndRefresh();
-        });
-        AddToggle("承伤", settings.ShowIncoming, value =>
-        {
-            settings.ShowIncoming = value;
-            SaveAndRefresh();
-        });
-        AddToggle("自损", settings.ShowSelfLoss, value =>
-        {
-            settings.ShowSelfLoss = value;
+            settings.ShowTakenBreakdown = value;
             SaveAndRefresh();
         });
 
         AddSection("布局与密度");
         AddOptionRow(
             "面板列数",
-            new[] { "1 列", "2 列", "3 列" },
-            Math.Clamp(settings.Columns, 1, 3) - 1,
+            new[] { "1 列", "2 列" },
+            Math.Clamp(settings.Columns, 1, 2) - 1,
             index =>
             {
-                settings.Columns = Math.Clamp(index + 1, 1, 3);
+                settings.Columns = Math.Clamp(index + 1, 1, 2);
                 SaveAndRefresh();
             });
-        AddSliderRow("排行/来源行数", settings.MaxRows, 1, 12, 1, value =>
+        AddSliderRow("每名玩家来源行数", settings.MaxRows, 1, 12, 1, value =>
         {
             settings.MaxRows = Math.Clamp((int)value, 1, 12);
             SaveAndRefresh();
         });
-        AddSliderRow("显示回合数", settings.MaxTurns, 1, 20, 1, value =>
-        {
-            settings.MaxTurns = Math.Clamp((int)value, 1, 20);
-            SaveAndRefresh();
-        });
+
         AddSliderRow("面板透明度", settings.PanelOpacity, 0.35, 1.0, 0.01, value =>
         {
             settings.PanelOpacity = Mathf.Clamp((float)value, 0.35f, 1f);

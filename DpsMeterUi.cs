@@ -102,7 +102,7 @@ public static class DpsMeterUi
 
         _panel.Scale = new Vector2(settings.UiScale, settings.UiScale);
         _panel.PivotOffset = Vector2.Zero;
-        _header!.Text = BuildHeader(snapshot, settings);
+        _header!.Text = BuildHeader(settings);
         ApplyPanelStyle(settings);
 
         ClearChildren(_moduleGrid!);
@@ -137,11 +137,10 @@ public static class DpsMeterUi
         DpsMeterSettingsUi.ToggleVisibility();
     }
 
-    private static string BuildHeader(CombatStatsSnapshot snapshot, DpsMeterSettingsData settings)
+    private static string BuildHeader(DpsMeterSettingsData settings)
     {
-        var state = snapshot.IsActive ? "战斗中" : "已结束";
         var hint = settings.LockPosition ? "位置已锁定" : "可拖动";
-        return $"Sts2 DPS  |  {state}  |  回合 {snapshot.CurrentTurn}  |  {snapshot.ElapsedSeconds:F1}s  |  {hint}  |  F7 设置  F8 开关";
+        return $"Sts2 DPS  |  {hint}  |  F7 设置  F8 开关";
     }
 
     private static void AddEmptyState(DpsMeterSettingsData settings)
@@ -153,358 +152,93 @@ public static class DpsMeterUi
 
     private static void AddModules(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
     {
-        if (settings.ShowSummary)
+        if (settings.ShowDealtBreakdown)
         {
-            AddSummaryModule(settings, snapshot);
+            AddDealtBreakdownModule(settings, snapshot);
         }
 
-        if (settings.ShowRanking)
+        if (settings.ShowTakenBreakdown)
         {
-            AddRankingModule(settings, snapshot);
-        }
-
-        if (settings.ShowCoreMetrics)
-        {
-            AddCoreModule(settings, snapshot);
-        }
-
-        if (settings.ShowDamageBreakdown)
-        {
-            AddBreakdownModule(settings, snapshot);
-        }
-
-        if (settings.ShowSources)
-        {
-            AddSourcesModule(settings, snapshot);
-        }
-
-        if (settings.ShowTurns)
-        {
-            AddTurnsModule(settings, snapshot);
-        }
-
-        if (settings.ShowCards)
-        {
-            AddCardsModule(settings, snapshot);
-        }
-
-        if (settings.ShowMechanisms)
-        {
-            AddMechanismsModule(settings, snapshot);
-        }
-
-        if (settings.ShowIncoming)
-        {
-            AddIncomingModule(settings, snapshot);
-        }
-
-        if (settings.ShowSelfLoss)
-        {
-            AddSelfLossModule(settings, snapshot);
+            AddTakenBreakdownModule(settings, snapshot);
         }
     }
 
-    private static void AddSummaryModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
+    private static void AddDealtBreakdownModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
     {
-        var body = CreateModule("战斗概要", AccentCyan, GetModuleWidth(settings));
-        AddKeyValueLine(body, "战斗状态", snapshot.IsActive ? "进行中" : "已结束", AccentCyan);
-        AddKeyValueLine(body, "耗时", $"{snapshot.ElapsedSeconds:F1} 秒");
-        AddKeyValueLine(body, "当前回合", snapshot.CurrentTurn.ToString());
-        AddKeyValueLine(body, "玩家数量", snapshot.Players.Count.ToString());
-        AddKeyValueLine(body, "总输出", snapshot.Players.Sum(player => player.TotalDamage).ToString());
-        AddTextLine(body, "输出口径：格挡 + 未格挡 + 过量伤害", MutedText);
-        AddModuleToGrid(body);
-    }
-
-    private static void AddRankingModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("玩家排行", AccentCyan, GetModuleWidth(settings));
-        var maxDamage = Math.Max(1L, snapshot.Players.Max(player => player.TotalDamage));
-        var colors = new[] { AccentCyan, AccentGreen, AccentOrange, AccentPurple, AccentRed, MutedText };
-        var rank = 1;
-
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
-        {
-            var color = colors[(rank - 1) % colors.Length];
-            var percent = maxDamage > 0 ? player.TotalDamage / (double)maxDamage * 100d : 0d;
-            var row = new HBoxContainer
-            {
-                MouseFilter = Control.MouseFilterEnum.Ignore
-            };
-            row.AddThemeConstantOverride("separation", 5);
-
-            var rankLabel = new Label
-            {
-                Text = rank.ToString(),
-                CustomMinimumSize = new Vector2(18, 0),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                MouseFilter = Control.MouseFilterEnum.Ignore
-            };
-            rankLabel.AddThemeColorOverride("font_color", color);
-            rankLabel.AddThemeFontSizeOverride("font_size", 12);
-            row.AddChild(rankLabel);
-
-            var nameLabel = new Label
-            {
-                Text = player.DisplayName,
-                CustomMinimumSize = new Vector2(74, 0),
-                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
-                MouseFilter = Control.MouseFilterEnum.Ignore
-            };
-            nameLabel.AddThemeColorOverride("font_color", PrimaryText);
-            nameLabel.AddThemeFontSizeOverride("font_size", 12);
-            row.AddChild(nameLabel);
-
-            var bar = new ProgressBar
-            {
-                MinValue = 0,
-                MaxValue = 100,
-                Value = percent,
-                ShowPercentage = false,
-                CustomMinimumSize = new Vector2(70, 16),
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-                MouseFilter = Control.MouseFilterEnum.Ignore
-            };
-            bar.AddThemeStyleboxOverride("background", CreateBarStyle(new Color(0.08f, 0.1f, 0.15f, 0.9f), color, 0.18f));
-            bar.AddThemeStyleboxOverride("fill", CreateBarStyle(color, color, 0.95f));
-            row.AddChild(bar);
-
-            var damageLabel = new Label
-            {
-                Text = $"{player.TotalDamage}  {percent:F0}%",
-                HorizontalAlignment = HorizontalAlignment.Right,
-                CustomMinimumSize = new Vector2(92, 0),
-                MouseFilter = Control.MouseFilterEnum.Ignore
-            };
-            damageLabel.AddThemeColorOverride("font_color", color);
-            damageLabel.AddThemeFontSizeOverride("font_size", 12);
-            row.AddChild(damageLabel);
-
-            body.AddChild(row);
-            rank++;
-        }
-
-        AddModuleToGrid(body);
-    }
-
-    private static StyleBoxFlat CreateBarStyle(Color background, Color border, float borderAlpha)
-    {
-        return new StyleBoxFlat
-        {
-            BgColor = background,
-            BorderColor = new Color(border.R, border.G, border.B, borderAlpha),
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 3,
-            CornerRadiusTopRight = 3,
-            CornerRadiusBottomLeft = 3,
-            CornerRadiusBottomRight = 3
-        };
-    }
-    private static void AddCoreModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("核心指标", AccentGreen, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
-        {
-            AddSubHeader(body, player.DisplayName, AccentGreen);
-            AddKeyValueLine(body, "总伤害", player.TotalDamage.ToString());
-            AddKeyValueLine(body, "DPS / DPT", $"{player.Dps:F1} / {player.Dpt:F1}");
-            AddKeyValueLine(body, "命中 / 最高", $"{player.HitCount} / {player.MaxHit}");
-        }
-
-        AddModuleToGrid(body);
-    }
-
-    private static void AddBreakdownModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("伤害拆分", AccentOrange, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
-        {
-            AddSubHeader(body, player.DisplayName, AccentOrange);
-            AddKeyValueLine(body, "有效掉血", player.EffectiveHpDamage.ToString());
-            AddKeyValueLine(body, "格挡伤害", player.BlockedDamage.ToString());
-            AddKeyValueLine(body, "未格挡", player.UnblockedDamage.ToString());
-            AddKeyValueLine(body, "过量伤害", player.OverkillDamage.ToString());
-        }
-
-        AddModuleToGrid(body);
-    }
-
-    private static void AddSourcesModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("输出来源", AccentCyan, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
+        var body = CreateModule("玩家造成伤害", AccentCyan, GetModuleWidth(settings));
+        foreach (var player in snapshot.Players)
         {
             AddSubHeader(body, player.DisplayName, AccentCyan);
+            AddKeyValueLine(body, "总伤害（含格挡）", $"{player.TotalDamage}（{player.HitCount} 次）");
+            AddKeyValueLine(body, "格挡吸收", player.BlockedDamage.ToString(), AccentOrange);
+            AddKeyValueLine(body, "生命伤害", player.UnblockedDamage.ToString(), AccentGreen);
+            AddKeyValueLine(body, "过量伤害", player.OverkillDamage.ToString(), AccentOrange);
+            AddTextLine(body, "按来源划分", MutedText, 11);
+
             var sources = player.Sources.Take(settings.MaxRows).ToArray();
             if (sources.Length == 0)
             {
-                AddTextLine(body, "暂无来源数据。", MutedText);
+                AddTextLine(body, "暂无伤害来源。", MutedText);
                 continue;
             }
 
             foreach (var source in sources)
             {
-                AddKeyValueLine(body, FormatSource(source), source.Damage.ToString());
+                AddKeyValueLine(
+                    body,
+                    $"{FormatSource(source)}（{source.Hits} 次）",
+                    source.Damage.ToString(),
+                    AccentCyan);
             }
         }
 
         AddModuleToGrid(body);
     }
 
-    private static void AddTurnsModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
+    private static void AddTakenBreakdownModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
     {
-        var body = CreateModule("逐回合伤害", AccentPurple, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
+        var body = CreateModule("玩家受到伤害", AccentRed, GetModuleWidth(settings));
+        foreach (var player in snapshot.Players)
         {
-            AddSubHeader(body, player.DisplayName, AccentPurple);
-            var turns = player.Turns.TakeLast(settings.MaxTurns).ToArray();
-            if (turns.Length == 0)
-            {
-                AddTextLine(body, "暂无回合数据。", MutedText);
-                continue;
-            }
-
-            foreach (var turn in turns)
-            {
-                var cardSummary = string.Join(
-                    " / ",
-                    turn.Cards
-                        .OrderByDescending(card => card.Damage)
-                        .Take(3)
-                        .Select(card => $"{card.DisplayName}:{card.Damage}"));
-                var suffix = string.IsNullOrWhiteSpace(cardSummary) ? string.Empty : $"  [{cardSummary}]";
-                AddTextLine(body, $"T{turn.Turn}  总伤害 {turn.Damage}{suffix}", PrimaryText);
-            }
-        }
-
-        AddModuleToGrid(body);
-    }
-
-    private static void AddCardsModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("卡牌伤害", AccentGreen, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
-        {
-            AddSubHeader(body, player.DisplayName, AccentGreen);
-            var cards = AggregateCards(player)
-                .Take(settings.MaxRows)
+            var sources = player.IncomingSources
+                .Concat(player.SelfLossSources)
+                .OrderByDescending(source => source.Damage)
+                .ThenBy(source => source.Source)
                 .ToArray();
-            if (cards.Length == 0)
+            var blockedDamage = sources.Sum(source => source.BlockedDamage);
+            var unblockedDamage = sources.Sum(source => source.UnblockedDamage);
+            var overkillDamage = sources.Sum(source => source.OverkillDamage);
+            var totalDamage = player.IncomingDamage + player.SelfLossDamage;
+            var totalHits = player.IncomingHits + player.SelfLossHits;
+
+            AddSubHeader(body, player.DisplayName, AccentRed);
+            AddKeyValueLine(body, "总受到伤害（含格挡）", $"{totalDamage}（{totalHits} 次）", AccentRed);
+            AddKeyValueLine(body, "敌方造成", player.IncomingDamage.ToString(), AccentRed);
+            AddKeyValueLine(body, "自损", player.SelfLossDamage.ToString(), AccentOrange);
+            AddKeyValueLine(body, "格挡吸收", blockedDamage.ToString(), AccentCyan);
+            AddKeyValueLine(body, "生命伤害", unblockedDamage.ToString(), AccentGreen);
+            AddKeyValueLine(body, "过量伤害", overkillDamage.ToString(), AccentOrange);
+            AddTextLine(body, "按来源划分", MutedText, 11);
+
+            var visibleSources = sources.Take(settings.MaxRows).ToArray();
+            if (visibleSources.Length == 0)
             {
-                AddTextLine(body, "暂无卡牌伤害。", MutedText);
+                AddTextLine(body, "暂无受到伤害来源。", MutedText);
                 continue;
             }
 
-            foreach (var card in cards)
+            foreach (var source in visibleSources)
             {
-                AddKeyValueLine(body, $"{card.Name}（{card.Hits} 次）", card.Damage.ToString());
+                AddKeyValueLine(
+                    body,
+                    $"{FormatSource(source)}（{source.Hits} 次）",
+                    source.Damage.ToString(),
+                    AccentRed);
             }
         }
 
         AddModuleToGrid(body);
     }
-
-    private static void AddMechanismsModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("机制伤害", AccentPurple, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
-        {
-            AddSubHeader(body, player.DisplayName, AccentPurple);
-            var mechanisms = AggregateMechanisms(player)
-                .Take(settings.MaxRows)
-                .ToArray();
-            if (mechanisms.Length == 0)
-            {
-                AddTextLine(body, "暂无机制伤害。", MutedText);
-                continue;
-            }
-
-            foreach (var mechanism in mechanisms)
-            {
-                AddKeyValueLine(body, $"{GetMechanismLabel(mechanism.Mechanism)}（{mechanism.Hits} 次）", mechanism.Damage.ToString());
-                if (mechanism.Mechanism == DamageMechanismKind.Poison)
-                {
-                    AddTextLine(body, "中毒来源跟踪已预留，当前先归入中毒机制。", MutedText, 11);
-                }
-            }
-        }
-
-        AddModuleToGrid(body);
-    }
-
-    private static void AddIncomingModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("承伤", AccentRed, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
-        {
-            AddSubHeader(body, player.DisplayName, AccentRed);
-            AddKeyValueLine(body, $"总承伤（{player.IncomingHits} 次）", player.IncomingDamage.ToString());
-            foreach (var source in player.IncomingSources.Take(settings.MaxRows))
-            {
-                AddKeyValueLine(body, $"  {FormatSource(source)}", source.Damage.ToString(), MutedText);
-            }
-
-            if (player.IncomingSources.Count == 0)
-            {
-                AddTextLine(body, "暂无承伤来源。", MutedText);
-            }
-        }
-
-        AddModuleToGrid(body);
-    }
-
-    private static void AddSelfLossModule(DpsMeterSettingsData settings, CombatStatsSnapshot snapshot)
-    {
-        var body = CreateModule("自损", AccentRed, GetModuleWidth(settings));
-        foreach (var player in snapshot.Players.Take(settings.MaxRows))
-        {
-            AddSubHeader(body, player.DisplayName, AccentRed);
-            AddKeyValueLine(body, $"总自损（{player.SelfLossHits} 次）", player.SelfLossDamage.ToString());
-            foreach (var source in player.SelfLossSources.Take(settings.MaxRows))
-            {
-                AddKeyValueLine(body, $"  {FormatSource(source)}", source.Damage.ToString(), MutedText);
-            }
-
-            if (player.SelfLossSources.Count == 0)
-            {
-                AddTextLine(body, "暂无自损来源。", MutedText);
-            }
-        }
-
-        AddModuleToGrid(body);
-    }
-
-    private static IEnumerable<(string Name, long Damage, int Hits)> AggregateCards(PlayerStatsSnapshot player)
-    {
-        return player.Turns
-            .SelectMany(turn => turn.Cards)
-            .GroupBy(card => card.GroupId)
-            .Select(group => (
-                Name: group.First().DisplayName,
-                Damage: group.Sum(card => card.Damage),
-                Hits: group.Sum(card => card.Hits)))
-            .OrderByDescending(card => card.Damage)
-            .ThenBy(card => card.Name);
-    }
-
-    private static IEnumerable<MechanismDamageSnapshot> AggregateMechanisms(PlayerStatsSnapshot player)
-    {
-        return player.Turns
-            .SelectMany(turn => turn.Mechanisms)
-            .GroupBy(mechanism => mechanism.Mechanism)
-            .Select(group => new MechanismDamageSnapshot(
-                group.Key,
-                group.Sum(item => item.Hits),
-                group.Sum(item => item.Damage),
-                group.Sum(item => item.BlockedDamage),
-                group.Sum(item => item.UnblockedDamage),
-                group.Sum(item => item.OverkillDamage)))
-            .OrderByDescending(mechanism => mechanism.Damage);
-    }
-
     private static VBoxContainer CreateModule(string title, Color accent, float width)
     {
         var card = new PanelContainer
@@ -804,20 +538,6 @@ public static class DpsMeterUi
             DamageSourceType.Event => "事件",
             DamageSourceType.Self => "自损",
             _ => "未知"
-        };
-    }
-
-    private static string GetMechanismLabel(DamageMechanismKind mechanism)
-    {
-        return mechanism switch
-        {
-            DamageMechanismKind.DirectAttack => "直接攻击",
-            DamageMechanismKind.PowerEffect => "状态效果",
-            DamageMechanismKind.Poison => "中毒",
-            DamageMechanismKind.Thorns => "荆棘反伤",
-            DamageMechanismKind.Reflect => "反射伤害",
-            DamageMechanismKind.HpLoss => "生命损失",
-            _ => "未知机制"
         };
     }
 
