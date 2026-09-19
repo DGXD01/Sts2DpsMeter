@@ -24,6 +24,10 @@ public sealed class DpsMeterSettingsData
 
 public static class DpsMeterSettings
 {
+    public const float MinUiScale = 0.5f;
+    public const float MaxUiScale = 2.0f;
+    public const float UiScaleStep = 0.05f;
+
     private const int CurrentSchemaVersion = 2;
     private const int MaxRowsLimit = 12;
 
@@ -98,6 +102,11 @@ public static class DpsMeterSettings
         Changed?.Invoke();
     }
 
+    public static float ClampUiScale(float value)
+    {
+        return Math.Clamp(value, MinUiScale, MaxUiScale);
+    }
+
     private static DpsMeterSettingsData Load()
     {
         try
@@ -155,7 +164,7 @@ public static class DpsMeterSettings
         settings.Columns = Math.Clamp(settings.Columns, 1, 2);
         settings.MaxRows = Math.Clamp(settings.MaxRows, 1, MaxRowsLimit);
         settings.PanelOpacity = Math.Clamp(settings.PanelOpacity, 0.35f, 1f);
-        settings.UiScale = Math.Clamp(settings.UiScale, 0.75f, 1.35f);
+        settings.UiScale = ClampUiScale(settings.UiScale);
         settings.PositionX = Math.Max(0f, settings.PositionX);
         settings.PositionY = Math.Max(0f, settings.PositionY);
     }

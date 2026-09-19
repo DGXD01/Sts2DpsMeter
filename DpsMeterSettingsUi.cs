@@ -188,11 +188,29 @@ public static class DpsMeterSettingsUi
             settings.PanelOpacity = Mathf.Clamp((float)value, 0.35f, 1f);
             SaveAndRefresh();
         });
-        AddSliderRow("界面缩放", settings.UiScale, 0.75, 1.35, 0.05, value =>
+        AddSliderRow(
+            "界面缩放",
+            settings.UiScale,
+            DpsMeterSettings.MinUiScale,
+            DpsMeterSettings.MaxUiScale,
+            DpsMeterSettings.UiScaleStep,
+            value =>
         {
-            settings.UiScale = Mathf.Clamp((float)value, 0.75f, 1.35f);
+            settings.UiScale = DpsMeterSettings.ClampUiScale((float)value);
             SaveAndRefresh();
         });
+        AddText("快捷缩放：按住 Ctrl 并将鼠标移到 HUD 上滚动滚轮。", MutedColor, 11);
+
+        var resetScale = new Button
+        {
+            Text = "重置 HUD 大小（100%）"
+        };
+        resetScale.Pressed += () =>
+        {
+            settings.UiScale = 1f;
+            SaveAndRefresh();
+        };
+        _content!.AddChild(resetScale);
 
         AddSection("位置");
         var resetPosition = new Button

@@ -27,7 +27,10 @@ public sealed class DpsHook : AbstractModel
     {
         try
         {
-            DpsStats.Record(choiceContext, dealer, target, result, props, cardSource);
+            if (DpsStats.Record(choiceContext, dealer, target, result, props, cardSource))
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
         }
         catch (Exception exception)
         {

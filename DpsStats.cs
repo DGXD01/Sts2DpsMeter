@@ -80,7 +80,7 @@ public static class DpsStats
         }
     }
 
-    public static void Record(
+    public static bool Record(
         PlayerChoiceContext choiceContext,
         Creature? dealer,
         Creature target,
@@ -91,26 +91,26 @@ public static class DpsStats
         var damage = result.BlockedDamage + result.UnblockedDamage + result.OverkillDamage;
         if (damage <= 0)
         {
-            return;
+            return false;
         }
 
         var attribution = DpsAttribution.Resolve(choiceContext, dealer, target, result, props, cardSource);
         if (attribution.Category == DamageCategory.Ignored)
         {
-            return;
+            return false;
         }
 
         var player = ResolveRecordedPlayer(attribution, dealer, target);
         if (player is null)
         {
-            return;
+            return false;
         }
 
         lock (SyncRoot)
         {
             if (!_active)
             {
-                return;
+                return false;
             }
 
             if (!Players.TryGetValue(player.NetId, out var stats))
@@ -166,6 +166,8 @@ public static class DpsStats
                     break;
             }
         }
+
+        return true;
     }
 
     public static CombatStatsSnapshot GetSnapshot()

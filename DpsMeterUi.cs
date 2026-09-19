@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using Godot;
 
 namespace Sts2DpsMeter;
@@ -26,6 +27,7 @@ public static class DpsMeterUi
     private static bool _visible = true;
     private static bool _visibilityInitialized;
     private static bool _dragging;
+    private static int _immediateRefreshRequested;
 
     public static bool IsVisible => _visible;
 
@@ -120,6 +122,16 @@ public static class DpsMeterUi
         EnsurePanelSize(settings);
     }
 
+    public static void RequestImmediateRefresh()
+    {
+        Interlocked.Exchange(ref _immediateRefreshRequested, 1);
+    }
+
+    internal static bool ConsumeImmediateRefreshRequest()
+    {
+        return Interlocked.Exchange(ref _immediateRefreshRequested, 0) == 1;
+    }
+
     public static void ToggleVisibility()
     {
         if (!IsAlive(_canvas))
@@ -140,7 +152,8 @@ public static class DpsMeterUi
     private static string BuildHeader(DpsMeterSettingsData settings)
     {
         var hint = settings.LockPosition ? "位置已锁定" : "可拖动";
-        return $"Sts2 DPS  |  {hint}  |  F7 设置  F8 开关";
+        var scalePercent = Mathf.RoundToInt(settings.UiScale * 100f);
+        return $"Sts2 DPS  |  {hint}  |  缩放 {scalePercent}%  |  Ctrl+滚轮  |  F7 设置  F8 开关";
     }
 
     private static void AddEmptyState(DpsMeterSettingsData settings)
@@ -462,13 +475,28 @@ public static class DpsMeterUi
     private static void OnPanelGuiInput(InputEvent @event)
     {
         var settings = DpsMeterSettings.Current;
-        if (settings.LockPosition)
-        {
-            return;
-        }
-
         if (@event is InputEventMouseButton mouseButton)
         {
+            if (mouseButton.Pressed &&
+                mouseButton.CtrlPressed &&
+                mouseButton.ButtonIndex is MouseButton.WheelUp or MouseButton.WheelDown)
+            {
+                var step = mouseButton.ButtonIndex == MouseButton.WheelUp
+                    ? DpsMeterSettings.UiScaleStep
+                    : -DpsMeterSettings.UiScaleStep;
+                settings.UiScale = DpsMeterSettings.ClampUiScale(settings.UiScale + step);
+                DpsMeterSettings.Save();
+                Refresh();
+                DpsMeterSettingsUi.Refresh();
+                _panel!.AcceptEvent();
+                return;
+            }
+
+            if (settings.LockPosition)
+            {
+                return;
+            }
+
             if (mouseButton.ButtonIndex == MouseButton.Left)
             {
                 if (mouseButton.Pressed)
@@ -485,7 +513,7 @@ public static class DpsMeterUi
                 }
             }
         }
-        else if (@event is InputEventMouseMotion mouseMotion && _dragging)
+        else if (@event is InputEventMouseMotion mouseMotion && _dragging && !settings.LockPosition)
         {
             var viewport = _panel!.GetViewport();
             var viewportSize = viewport?.GetVisibleRect().Size ?? new Vector2(1280f, 720f);
@@ -582,8 +610,9 @@ internal sealed class DpsMeterHost : Node
 
         _toggleSettingsPressed = settingsPressed;
 
+        var immediateRefresh = DpsMeterUi.ConsumeImmediateRefreshRequest();
         _refreshTimer -= delta;
-        if (_refreshTimer <= 0)
+        if (immediateRefresh || _refreshTimer <= 0)
         {
             _refreshTimer = 0.25;
             DpsMeterUi.Refresh();
