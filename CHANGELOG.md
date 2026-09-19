@@ -12,6 +12,7 @@
 - 移除全部热键：删除 F7 设置、F8 显示切换和 Ctrl+滚轮缩放；设置改由 HUD 标题栏的“设”按钮打开，界面缩放只通过设置滑块调整。
 - 禁用 Mod 交互控件的键盘焦点，避免游戏将 `E` 映射为确认键时误触 HUD 或设置面板；所有操作只响应鼠标。
 - 新增静默猎手单人卡牌静态伤害覆盖与 [静默猎手伤害覆盖](docs/静默猎手伤害覆盖.md)：核对 88 张卡牌，整理 27 张直接伤害卡、Shiv 派生伤害、中毒和四种能力间接伤害路径。
+- 新增储君单人卡牌静态伤害覆盖与 [储君伤害覆盖](docs/储君伤害覆盖.md)：核对 88 张卡牌和 32 张直接伤害卡，补充 `BlackHolePower`、`ReflectPower` 的唯一来源映射，并明确 `SovereignBlade`、`MinionStrike`、`MinionDiveBomb` Token 独立统计规则。
 - 接入 `AfterPowerAmountChanged` 状态来源记录：能力来源唯一时归因到对应卡牌；`ThornsPower` 出现混合或未知来源时回退到能力名，避免误归因。
 - 为静默猎手 `Outbreak`、`SerpentForm`、`Speedster`、`Strangle` 补充稳定能力映射；`PoisonPower` 继续排除在来源追溯之外，来源状态保持 `Deferred`。
 - 补充静默猎手运行态验证清单：覆盖 `Abrasive`、`ThornsPower`、能力间接伤害、Shiv 修正和中毒来源边界。

@@ -128,6 +128,7 @@ public static class DpsAttribution
         ["InfernoPower"] = "火焰/持续伤害",
         ["ThunderPower"] = "闪电",
         ["FlameBarrierPower"] = "火焰/反伤",
+        ["BlackHolePower"] = "星能/能力伤害",
         ["ReflectPower"] = "反伤",
         ["ThornsPower"] = "反伤",
         ["ConstrictPower"] = "束缚/持续伤害"
@@ -142,6 +143,7 @@ public static class DpsAttribution
     // 只映射能够稳定确定唯一来源卡牌的能力。共享能力必须依赖运行时来源记录。
     private static readonly Dictionary<Type, Type> PowerOriginCardTypes = new()
     {
+        [typeof(BlackHolePower)] = typeof(BlackHole),
         [typeof(FlameBarrierPower)] = typeof(FlameBarrier),
         [typeof(InfernoPower)] = typeof(Inferno),
         [typeof(JuggernautPower)] = typeof(Juggernaut),
@@ -149,6 +151,7 @@ public static class DpsAttribution
         [typeof(OutbreakPower)] = typeof(Outbreak),
         [typeof(SerpentFormPower)] = typeof(SerpentForm),
         [typeof(SpeedsterPower)] = typeof(Speedster),
+        [typeof(ReflectPower)] = typeof(Reflect),
         [typeof(StranglePower)] = typeof(Strangle)
     };
 
