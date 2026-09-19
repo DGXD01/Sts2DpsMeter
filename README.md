@@ -8,7 +8,7 @@
 | --- | --- |
 | GitHub 仓库 | 已创建，私有 |
 | 当前开发分支 | `feature/DpsMeterCore` |
-| 当前 Mod 版本 | `0.2.0` 铁甲战士测试版 |
+| 当前 Mod 版本 | `0.2.1` 铁甲战士测试版 |
 | 目标游戏版本 | `0.107.1` |
 | 真实游戏程序集编译 | 已通过：Release、0 警告、0 错误 |
 | 游戏内运行 | 未验证 |
@@ -29,8 +29,7 @@
 - 卡牌、遗物、药水、状态和机制伤害统一并入玩家造成伤害的来源划分；卡牌按稳定卡牌 ID 聚合，同名卡牌合并为一个统计类型。
 - 按 `F7` 打开设置面板，按 `F8` 显示或隐藏 HUD；未锁定时可拖动 HUD 并保存位置。
 - HUD 支持 `50%` 至 `200%` 缩放：可在 `F7` 面板拖动“界面缩放”滑块，也可将鼠标移到 HUD 上后按住 `Ctrl` 滚动滚轮快速缩放。
-- 每次伤害事件被成功归类后立即请求刷新，HUD 在下一帧更新；同一帧内的连锁伤害合并为一次刷新。
-- HUD 支持 `50%` 至 `200%` 缩放：可在 `F7` 面板拖动
+- 每次伤害事件被成功归类后立即请求刷新：主线程直接刷新，后台线程安全投递到 Godot 主线程；同一帧内的连锁伤害合并为一次刷新。
 - 战斗结束时向 Godot 日志输出输出、承伤和自损明细。
 - 暂停游戏时停止累计 DPS 计时。
 
@@ -148,7 +147,7 @@ pwsh -NoProfile -File .\scripts\build-and-stage.ps1 -SkipArchive
 
 ```text
 artifacts/build/Sts2DpsMeter.dll
-artifacts/workshop/Sts2DpsMeter-Ironclad-Test-0.2.0.zip
+artifacts/workshop/Sts2DpsMeter-Ironclad-Test-0.2.1.zip
 ```
 
 ZIP 根目录结构：
@@ -165,7 +164,7 @@ README.md
 
 ## 版本与更新规则
 
-- Mod 版本使用三段式语义化版本，例如 `0.2.0`。
+- Mod 版本使用三段式语义化版本，例如 `0.2.1`。
 - `manifest.json` 的 `version` 与项目文件 `<Version>` 必须一致。
 - 每次发布前更新 `CHANGELOG.md`。
 - 首次 Steam 上传后，上传器生成的 `mod_id.txt` 必须保留并提交，后续更新依靠它定位已有创意工坊条目。

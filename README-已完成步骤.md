@@ -12,7 +12,7 @@
 | 初始 `main` | 已建立并推送，提交为 `0669372 chore(Sts2DpsMeter)：初始化仓库` |
 | 功能分支 | `feature/DpsMeterCore` |
 | 目标游戏版本 | `0.107.1` |
-| 当前 Mod 版本 | `0.2.0` 铁甲战士测试版 |
+| 当前 Mod 版本 | `0.2.1` 铁甲战士测试版 |
 | 真实游戏程序集编译 | 已通过，Release、0 警告、0 错误 |
 | 游戏内运行验证 | 尚未完成 |
 | Steam 创意工坊上传 | 尚未执行 |
@@ -97,14 +97,14 @@ C:\Users\lenovo\Documents\Codex\2026-09-19\new-chat\outputs\Sts2DpsMeter
 | `.github/CODEOWNERS` | 指定仓库所有者审查 |
 | `docs/开发与更新流程.md` | 分支、merge、版本、GitHub 和 Steam 上传流程 |
 | `docs/技术债.md` | 记录运行验证和后续技术债 |
-| `CHANGELOG.md` | 记录 `0.2.0` 的已完成项和待验证项 |
+| `CHANGELOG.md` | 记录 `0.2.1` 的已完成项和待验证项 |
 | `workshop/workshop.json` | Steam 创意工坊标题、描述、私有可见性和标签 |
 | `workshop/image.png` | 小于 1 MB 的占位封面，正式上传前需要替换 |
 
 当前 ZIP：
 
 ```text
-artifacts\workshop\Sts2DpsMeter-Ironclad-Test-0.2.0.zip
+artifacts\workshop\Sts2DpsMeter-Ironclad-Test-0.2.1.zip
 ```
 
 ZIP 根目录：
@@ -130,7 +130,7 @@ E:\STEAM\steam\steamapps\common\Slay the Spire 2
 | 检查 | 结果 |
 | --- | --- |
 | `dotnet format --verify-no-changes --no-restore` | 通过 |
-| `scripts/validate-repo.ps1` | 通过，Mod 版本 `0.2.0` |
+| `scripts/validate-repo.ps1` | 通过，Mod 版本 `0.2.1` |
 | `dotnet build -c Release -warnaserror` | 成功，0 警告、0 错误 |
 | `scripts/build-and-stage.ps1 -Configuration Release` | 成功，生成创意工坊 ZIP |
 
@@ -138,7 +138,7 @@ E:\STEAM\steam\steamapps\common\Slay the Spire 2
 
 ```text
 artifacts\build\Sts2DpsMeter.dll
-artifacts\workshop\Sts2DpsMeter-Ironclad-Test-0.2.0.zip
+artifacts\workshop\Sts2DpsMeter-Ironclad-Test-0.2.1.zip
 ```
 
 `artifacts/` 已加入 `.gitignore`，不会提交到 GitHub。
@@ -176,4 +176,4 @@ artifacts\workshop\Sts2DpsMeter-Ironclad-Test-0.2.0.zip
 6. 合并后替换正式封面、确定许可证，并执行 Steam 私有上传测试。
 7. 首次上传后保存并提交 `mod_id.txt`，再执行后续更新验证。
 
-> 当前状态是“已实现并通过真实程序集编译和创意工坊打包，但尚未经过游戏内运行验证”，不能把 `0.2.0` 标记为稳定发布版。
+> 当前状态是“已实现并通过真实程序集编译和创意工坊打包，但尚未经过游戏内运行验证”，不能把 `0.2.1` 标记为稳定发布版。

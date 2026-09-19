@@ -3,7 +3,7 @@
   "name": "Sts2 DPS Meter - 铁甲战士测试版",
   "author": "DGXD",
   "description": "铁甲战士伤害统计测试版：HUD 仅保留玩家造成伤害和玩家受到伤害两个可拼接模块，支持 F7 设置、F8 显示切换及 Ctrl+滚轮缩放。",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "min_game_version": "0.107.1",
   "has_pck": false,
   "has_dll": true,

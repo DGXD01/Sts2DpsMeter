@@ -2,7 +2,7 @@
   "title": "Sts2 DPS Meter - 铁甲战士测试版",
   "description": "铁甲战士伤害统计测试版。HUD 只保留“玩家造成伤害”和“玩家受到伤害”两个可拼接模块，支持 F7 设置、F8 显示切换，以及界面缩放和 Ctrl+滚轮快捷缩放。",
   "visibility": "private",
-  "changeNote": "开发版：HUD 精简为玩家造成伤害和玩家受到伤害两个模块，并将承伤、自损、格挡及各类输出来源统一划分。",
+  "changeNote": "0.2.1 测试版：修复逐次伤害不能立即刷新 HUD 的问题，并动态收紧面板高度、减少底部空白。",
   "tags": ["Tools & APIs"],
   "dependencies": [],
   "contentDescriptors": []
