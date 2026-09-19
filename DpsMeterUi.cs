@@ -54,7 +54,8 @@ public static class DpsMeterUi
             {
                 _host = new DpsMeterHost
                 {
-                    Name = "Sts2DpsMeterHost"
+                    Name = "Sts2DpsMeterHost",
+                    ProcessMode = Node.ProcessModeEnum.Always
                 };
                 root.AddChild(_host);
             }
@@ -586,29 +587,28 @@ public static class DpsMeterUi
 
 internal sealed class DpsMeterHost : Node
 {
-    private bool _toggleHudPressed;
-    private bool _toggleSettingsPressed;
     private double _refreshTimer;
+
+    public override void _Input(InputEvent @event)
+    {
+        if (@event is not InputEventKey key || !key.Pressed || key.Echo)
+        {
+            return;
+        }
+
+        if (IsKey(key, Key.F8))
+        {
+            DpsMeterUi.ToggleVisibility();
+        }
+        else if (IsKey(key, Key.F7))
+        {
+            DpsMeterUi.ShowSettings();
+        }
+    }
 
     public override void _Process(double delta)
     {
         DpsStats.Tick(delta);
-
-        var hudPressed = Input.IsPhysicalKeyPressed(Key.F8);
-        if (hudPressed && !_toggleHudPressed)
-        {
-            DpsMeterUi.ToggleVisibility();
-        }
-
-        _toggleHudPressed = hudPressed;
-
-        var settingsPressed = Input.IsPhysicalKeyPressed(Key.F7);
-        if (settingsPressed && !_toggleSettingsPressed)
-        {
-            DpsMeterUi.ShowSettings();
-        }
-
-        _toggleSettingsPressed = settingsPressed;
 
         var immediateRefresh = DpsMeterUi.ConsumeImmediateRefreshRequest();
         _refreshTimer -= delta;
@@ -617,5 +617,10 @@ internal sealed class DpsMeterHost : Node
             _refreshTimer = 0.25;
             DpsMeterUi.Refresh();
         }
+    }
+
+    private static bool IsKey(InputEventKey key, Key expected)
+    {
+        return key.PhysicalKeycode == expected || key.Keycode == expected;
     }
 }
