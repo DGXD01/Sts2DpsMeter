@@ -145,11 +145,14 @@ public static class DpsAttribution
     {
         [typeof(BlackHolePower)] = typeof(BlackHole),
         [typeof(FlameBarrierPower)] = typeof(FlameBarrier),
+        [typeof(HauntPower)] = typeof(Haunt),
         [typeof(InfernoPower)] = typeof(Inferno),
         [typeof(JuggernautPower)] = typeof(Juggernaut),
         [typeof(CrimsonMantlePower)] = typeof(CrimsonMantle),
+        [typeof(NecroMasteryPower)] = typeof(NecroMastery),
         [typeof(OutbreakPower)] = typeof(Outbreak),
         [typeof(SerpentFormPower)] = typeof(SerpentForm),
+        [typeof(SleightOfFleshPower)] = typeof(SleightOfFlesh),
         [typeof(SpeedsterPower)] = typeof(Speedster),
         [typeof(ReflectPower)] = typeof(Reflect),
         [typeof(StranglePower)] = typeof(Strangle)

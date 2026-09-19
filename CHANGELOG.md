@@ -16,6 +16,10 @@
 - 接入 `AfterPowerAmountChanged` 状态来源记录：能力来源唯一时归因到对应卡牌；`ThornsPower` 出现混合或未知来源时回退到能力名，避免误归因。
 - 为静默猎手 `Outbreak`、`SerpentForm`、`Speedster`、`Strangle` 补充稳定能力映射；`PoisonPower` 继续排除在来源追溯之外，来源状态保持 `Deferred`。
 - 补充静默猎手运行态验证清单：覆盖 `Abrasive`、`ThornsPower`、能力间接伤害、Shiv 修正和中毒来源边界。
+- 新增亡魂契约师单人卡牌静态伤害覆盖与 [亡魂契约师伤害覆盖](docs/亡魂契约师伤害覆盖.md)：核对 88 张卡牌，整理 24 张直接伤害卡、12 张 Osty 攻击卡和 `SweepingGaze` 派生 Token。
+- 为亡魂契约师 `Haunt`、`NecroMastery`、`SleightOfFlesh` 补充 `HauntPower`、`NecroMasteryPower`、`SleightOfFleshPower` 的唯一来源映射。
+- 明确亡魂契约师 Doom 击杀走 `CreatureCmd.Kill`，不产生标准伤害事件；`BlightStrike`、`TimesUp` 的直接伤害仍按卡牌统计。
+- 补充亡魂契约师运行态验证清单：覆盖直接伤害、Osty 攻击、能力间接伤害、`SweepingGaze`、`Soul`、`Undeath`、Osty 死亡自损边界和 Doom 口径。
 
 ## [0.2.1] - 2026-09-19
 
