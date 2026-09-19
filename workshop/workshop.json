@@ -1,0 +1,9 @@
+{
+  "title": "Sts2 DPS Meter",
+  "description": "统计战斗总伤害、战斗时长、DPS 和每回合伤害，并按卡牌或宠物来源汇总；战斗中按 F8 显示或隐藏面板。",
+  "visibility": "private",
+  "changeNote": "实现基础 DPS 面板、回合伤害和战斗结束日志，待游戏内运行验证。",
+  "tags": ["Tools & APIs"],
+  "dependencies": [],
+  "contentDescriptors": []
+}

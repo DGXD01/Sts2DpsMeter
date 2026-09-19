@@ -1,0 +1,12 @@
+{
+  "id": "Sts2DpsMeter",
+  "name": "Sts2 DPS Meter",
+  "author": "DGXD",
+  "description": "统计战斗总伤害、战斗时长、DPS 和每回合伤害，并按卡牌或宠物来源汇总；战斗中按 F8 显示或隐藏面板。",
+  "version": "0.1.0",
+  "min_game_version": "0.107.1",
+  "has_pck": false,
+  "has_dll": true,
+  "dependencies": [],
+  "affects_gameplay": false
+}
