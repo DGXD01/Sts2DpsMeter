@@ -34,7 +34,6 @@ C:\Users\lenovo\Documents\Codex\2026-09-19\new-chat\outputs\Sts2DpsMeter
 
 ### 1. 参考资料分析
 
-- 已读取并分析“皮皮统计: Skada”的伤害统计行为与主要统计口径。
 - 已参考《杀戮尖塔2》多人伤害统计 Mod，确认 Mod 初始化、战斗 Hook 和伤害事件的实际接入方式。
 - 新项目采用独立实现，没有复制参考 Mod 的 DLL、反编译源码、图片或本地化资源。
 
