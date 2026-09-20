@@ -18,6 +18,7 @@ $workshopManifestPath = Join-Path $workshopRoot 'workshop.json'
 $workshopReadmePath = Join-Path $workshopRoot 'README.md'
 $coverPath = Join-Path $workshopRoot 'image.png'
 $contentDir = Join-Path $workshopRoot 'content'
+$previewDir = Join-Path $workshopRoot 'previews'
 $artifactDir = Join-Path $repoRoot 'artifacts\build'
 $workshopArtifactDir = Join-Path $repoRoot 'artifacts\workshop'
 
@@ -123,8 +124,29 @@ function New-WorkshopArchive {
     if (Test-Path -LiteralPath $workshopReadmePath -PathType Leaf) {
         Copy-Item -LiteralPath $workshopReadmePath -Destination (Join-Path $packageRoot 'README.md') -Force
     }
+    $previewRelativeEntries = [System.Collections.Generic.List[string]]::new()
+    if (Test-Path -LiteralPath $previewDir -PathType Container) {
+        $previewFiles = @(Get-ChildItem -LiteralPath $previewDir -File | Sort-Object Name)
+        foreach ($previewFile in $previewFiles) {
+            $extension = $previewFile.Extension.ToLowerInvariant()
+            if (@('.png', '.jpg', '.jpeg') -notcontains $extension) {
+                throw "创意工坊预览图格式不支持：$($previewFile.FullName)"
+            }
+            if ($previewFile.Length -ge 1MB) {
+                throw "创意工坊预览图必须小于 1 MB：$($previewFile.FullName)"
+            }
+        }
+        if ($previewFiles.Count -gt 0) {
+            $previewPackageDir = Join-Path $packageRoot 'previews'
+            New-Item -ItemType Directory -Force -Path $previewPackageDir | Out-Null
+            foreach ($previewFile in $previewFiles) {
+                Copy-Item -LiteralPath $previewFile.FullName -Destination (Join-Path $previewPackageDir $previewFile.Name) -Force
+                $previewRelativeEntries.Add("previews/$($previewFile.Name)")
+            }
+        }
+    }
 
-    $archivePath = Join-Path $workshopArtifactDir "Sts2DpsMeter-Ironclad-Test-$Version.zip"
+    $archivePath = Join-Path $workshopArtifactDir "Sts2DpsMeter-Lite-$Version.zip"
     if (Test-Path -LiteralPath $archivePath) {
         Remove-Item -LiteralPath $archivePath -Force
     }
@@ -141,7 +163,7 @@ function New-WorkshopArchive {
             'content/manifest.json',
             'workshop.json',
             'image.png'
-        )
+        ) + $previewRelativeEntries.ToArray()
         foreach ($entry in $requiredEntries) {
             if ($entries -notcontains $entry) {
                 throw "创意工坊 ZIP 缺少条目：$entry"
