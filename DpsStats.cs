@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 using MegaCrit.Sts2.Core.Combat;
+using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Entities.Creatures;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.ValueProps;
 
 namespace Sts2DpsMeter;
@@ -37,6 +39,11 @@ public static class DpsStats
 
     public static void BeginCombat()
     {
+        BeginCombat(Array.Empty<Player>());
+    }
+
+    public static void BeginCombat(IReadOnlyList<Player> players)
+    {
         lock (SyncRoot)
         {
             Players.Clear();
@@ -44,6 +51,21 @@ public static class DpsStats
             _active = true;
             _elapsedSeconds = 0;
             _currentTurn = 1;
+
+            if (players is null)
+            {
+                return;
+            }
+
+            foreach (var player in players)
+            {
+                if (player is null)
+                {
+                    continue;
+                }
+
+                Players[player.NetId] = CreatePlayerAccumulator(player);
+            }
         }
     }
 
@@ -207,11 +229,11 @@ public static class DpsStats
 
             if (!Players.TryGetValue(player.NetId, out var stats))
             {
-                stats = new PlayerAccumulator(player.NetId, ResolvePlayerName(player));
+                stats = CreatePlayerAccumulator(player);
                 Players.Add(player.NetId, stats);
             }
 
-            stats.DisplayName = ResolvePlayerName(player);
+            ApplyPlayerMetadata(stats, player);
 
             var sourceStats = attribution.Category switch
             {
@@ -271,6 +293,10 @@ public static class DpsStats
                 .Select(player => new PlayerStatsSnapshot(
                     player.PlayerNetId,
                     player.DisplayName,
+                    player.CharacterId,
+                    player.CharacterName,
+                    player.NameColorHex,
+                    player.IsLocalPlayer,
                     player.TotalDamage,
                     player.HitCount,
                     player.MaxHit,
@@ -496,8 +522,37 @@ public static class DpsStats
         }
     }
 
+    private static PlayerAccumulator CreatePlayerAccumulator(Player player)
+    {
+        var stats = new PlayerAccumulator(player.NetId, ResolvePlayerName(player));
+        ApplyPlayerMetadata(stats, player);
+        return stats;
+    }
+
+    private static void ApplyPlayerMetadata(PlayerAccumulator stats, Player player)
+    {
+        stats.DisplayName = ResolvePlayerName(player);
+        stats.CharacterId = ResolveCharacterId(player);
+        stats.CharacterName = ResolveCharacterName(player);
+        stats.NameColorHex = ResolveNameColorHex(player);
+        stats.IsLocalPlayer = ResolveIsLocalPlayer(player);
+    }
+
     private static string ResolvePlayerName(Player player)
     {
+        try
+        {
+            var platformName = PlatformUtil.GetPlayerNameRaw(PlatformUtil.PrimaryPlatform, player.NetId);
+            if (!string.IsNullOrWhiteSpace(platformName))
+            {
+                return platformName.Trim();
+            }
+        }
+        catch
+        {
+            // Steam/LAN 平台名不可用时继续使用战斗内显示名。
+        }
+
         try
         {
             var creatureName = player.Creature?.Name;
@@ -527,6 +582,60 @@ public static class DpsStats
         return $"玩家 {player.NetId}";
     }
 
+    private static string ResolveCharacterId(Player player)
+    {
+        try
+        {
+            return player.Character?.Id.Entry ?? "UNKNOWN";
+        }
+        catch
+        {
+            return "UNKNOWN";
+        }
+    }
+
+    private static string ResolveCharacterName(Player player)
+    {
+        try
+        {
+            var title = player.Character?.Title?.ToString();
+            if (!string.IsNullOrWhiteSpace(title))
+            {
+                return title;
+            }
+        }
+        catch
+        {
+            // 职业名称仅用于富文本补充信息。
+        }
+
+        return "未知职业";
+    }
+
+    private static string ResolveNameColorHex(Player player)
+    {
+        try
+        {
+            return player.Character?.NameColor.ToHtml(false) ?? "FFFFFF";
+        }
+        catch
+        {
+            return "FFFFFF";
+        }
+    }
+
+    private static bool ResolveIsLocalPlayer(Player player)
+    {
+        try
+        {
+            return LocalContext.IsMe(player);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private sealed class PlayerAccumulator
     {
         public PlayerAccumulator(ulong playerNetId, string displayName)
@@ -538,6 +647,14 @@ public static class DpsStats
         public ulong PlayerNetId { get; }
 
         public string DisplayName { get; set; }
+
+        public string CharacterId { get; set; } = "UNKNOWN";
+
+        public string CharacterName { get; set; } = "未知职业";
+
+        public string NameColorHex { get; set; } = "FFFFFF";
+
+        public bool IsLocalPlayer { get; set; }
 
         public long TotalDamage { get; set; }
 

@@ -53,6 +53,10 @@ public sealed record TurnStatsSnapshot(
 public sealed record PlayerStatsSnapshot(
     ulong PlayerNetId,
     string DisplayName,
+    string CharacterId,
+    string CharacterName,
+    string NameColorHex,
+    bool IsLocalPlayer,
     long TotalDamage,
     int HitCount,
     int MaxHit,

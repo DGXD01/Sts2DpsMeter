@@ -44,7 +44,7 @@ public static class ModEntry
 
     private static void OnCombatSetUp(CombatState state)
     {
-        DpsStats.BeginCombat();
+        DpsStats.BeginCombat(state.Players);
         DpsMeterUi.EnsureAttached();
 
         CombatManager.Instance.TurnStarted -= OnTurnStarted;

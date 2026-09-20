@@ -110,7 +110,7 @@ public static class DpsMeterSettingsUi
 
         var introduction = new Label
         {
-            Text = "伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；标题左右箭头切换玩家，右上角下拉框选择统计范围或“同时”，最右侧 +/- 折叠明细。",
+            Text = "伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；标题左右箭头切换玩家，右上角下拉框选择统计范围、“同时”或“多人”，最右侧 +/- 折叠明细。",
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Godot;
+using MegaCrit.Sts2.Core.Helpers;
 
 namespace Sts2DpsMeter;
 
@@ -15,6 +16,7 @@ public static class DpsMeterUi
     private const int ScopeTaken = 2;
     private const int ScopeTotal = 3;
     private const int ScopeBoth = 4;
+    private const int ScopeMultiplayer = 5;
 
     private static readonly Color PanelBackground = new(0f, 0f, 0f, 0.92f);
     private static readonly Color PanelBorder = new(0.92f, 0.95f, 1f, 0.88f);
@@ -163,7 +165,7 @@ public static class DpsMeterUi
                 }
 
                 var rows = section.Rows
-                    .Where(row => row.Damage > 0)
+                    .Where(row => section.KeepZeroRows || row.Damage > 0)
                     .OrderByDescending(row => row.Damage)
                     .ThenBy(row => row.Label, StringComparer.Ordinal)
                     .Take(settings.MaxRows)
@@ -180,7 +182,7 @@ public static class DpsMeterUi
                     var percentage = section.Total > 0
                         ? Math.Clamp(row.Damage / (double)section.Total * 100d, 0d, 100d)
                         : 0d;
-                    AddDamageRow(settings, row.Label, row.Damage, percentage);
+                    AddDamageRow(settings, row, percentage);
                 }
             }
         }
@@ -243,11 +245,17 @@ public static class DpsMeterUi
     {
         if (snapshot.Players.Count == 0)
         {
-            return new DamageViewData("伤害：0", Array.Empty<DamageSectionData>());
+            var emptyTitle = _scopeIndex == ScopeMultiplayer ? "多人：0" : "伤害：0";
+            return new DamageViewData(emptyTitle, Array.Empty<DamageSectionData>());
         }
 
         _selectedPlayerIndex = Math.Clamp(_selectedPlayerIndex, 0, snapshot.Players.Count - 1);
         var player = snapshot.Players[_selectedPlayerIndex];
+
+        if (_scopeIndex == ScopeMultiplayer)
+        {
+            return BuildMultiplayerView(settings, snapshot);
+        }
 
         if (_scopeIndex == ScopeBoth)
         {
@@ -285,6 +293,71 @@ public static class DpsMeterUi
             new[] { new DamageSectionData(null, total, rows) });
     }
 
+    private static DamageViewData BuildMultiplayerView(
+        DpsMeterSettingsData settings,
+        CombatStatsSnapshot snapshot)
+    {
+        var dealtTotal = snapshot.Players.Sum(player => player.TotalDamage);
+        var takenTotal = snapshot.Players.Sum(player => player.IncomingDamage + player.SelfLossDamage);
+        var sections = new List<DamageSectionData>();
+
+        if (settings.ShowDealtBreakdown)
+        {
+            sections.Add(new DamageSectionData(
+                "队伍输出排行",
+                dealtTotal,
+                BuildMultiplayerOutputRows(snapshot),
+                KeepZeroRows: true));
+        }
+
+        if (settings.ShowTakenBreakdown)
+        {
+            sections.Add(new DamageSectionData(
+                "队伍承伤排行",
+                takenTotal,
+                BuildMultiplayerTakenRows(snapshot),
+                KeepZeroRows: true));
+        }
+
+        var title = (settings.ShowDealtBreakdown, settings.ShowTakenBreakdown) switch
+        {
+            (true, true) => $"多人：输出 {dealtTotal} / 承伤 {takenTotal}",
+            (true, false) => $"多人：队伍输出 {dealtTotal}",
+            (false, true) => $"多人：队伍承伤 {takenTotal}",
+            _ => "多人：0"
+        };
+
+        return new DamageViewData(title, sections);
+    }
+
+    private static IReadOnlyList<DamageRowData> BuildMultiplayerOutputRows(CombatStatsSnapshot snapshot)
+    {
+        return snapshot.Players
+            .OrderByDescending(player => player.TotalDamage)
+            .ThenBy(player => player.PlayerNetId)
+            .Select(player => new DamageRowData(
+                player.DisplayName,
+                player.TotalDamage,
+                $"{player.CharacterName} · {player.Dps:0.0} DPS · {player.Dpt:0.0} DPT · {player.HitCount} 次",
+                player.NameColorHex,
+                player.IsLocalPlayer))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<DamageRowData> BuildMultiplayerTakenRows(CombatStatsSnapshot snapshot)
+    {
+        return snapshot.Players
+            .OrderByDescending(player => player.IncomingDamage + player.SelfLossDamage)
+            .ThenBy(player => player.PlayerNetId)
+            .Select(player => new DamageRowData(
+                player.DisplayName,
+                player.IncomingDamage + player.SelfLossDamage,
+                $"{player.CharacterName} · 敌方 {player.IncomingDamage} · 自损 {player.SelfLossDamage} · " +
+                $"命中 {player.IncomingHits + player.SelfLossHits}",
+                player.NameColorHex,
+                player.IsLocalPlayer))
+            .ToArray();
+    }
     private static IReadOnlyList<DamageRowData> BuildCurrentRows(PlayerStatsSnapshot player)
     {
         return player.Sources
@@ -335,6 +408,16 @@ public static class DpsMeterUi
         long damage,
         double percentage)
     {
+        AddDamageRow(settings, new DamageRowData(labelText, damage), percentage);
+    }
+
+    private static void AddDamageRow(
+        DpsMeterSettingsData settings,
+        DamageRowData rowData,
+        double percentage)
+    {
+        var labelText = rowData.Label;
+        var damage = rowData.Damage;
         var rowHeight = settings.CompactMode ? 24f : 28f;
         var row = new Control
         {
@@ -374,19 +457,47 @@ public static class DpsMeterUi
         textRow.AddThemeConstantOverride("separation", 8);
         overlay.AddChild(textRow);
 
-        var nameLabel = new Label
+        Control nameControl;
+        if (rowData.Details is not null)
         {
-            Text = labelText,
-            VerticalAlignment = VerticalAlignment.Center,
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore,
-            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
-        };
-        nameLabel.AddThemeColorOverride("font_color", PrimaryText);
-        nameLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
-        nameLabel.AddThemeConstantOverride("outline_size", 2);
-        nameLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
-        textRow.AddChild(nameLabel);
+            var richName = new RichTextLabel
+            {
+                Text = BuildRichRowText(rowData),
+                BbcodeEnabled = true,
+                FitContent = true,
+                ScrollActive = false,
+                AutowrapMode = TextServer.AutowrapMode.Off,
+                ClipContents = true,
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+                CustomMinimumSize = new Vector2(0, rowHeight),
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
+            richName.AddThemeColorOverride("default_color", PrimaryText);
+            richName.AddThemeColorOverride("font_outline_color", Colors.Black);
+            richName.AddThemeConstantOverride("outline_size", 2);
+            richName.AddThemeFontSizeOverride(
+                "normal_font_size",
+                settings.CompactMode ? 12 : 13);
+            nameControl = richName;
+        }
+        else
+        {
+            var nameLabel = new Label
+            {
+                Text = labelText,
+                VerticalAlignment = VerticalAlignment.Center,
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+                MouseFilter = Control.MouseFilterEnum.Ignore,
+                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
+            };
+            nameLabel.AddThemeColorOverride("font_color", PrimaryText);
+            nameLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
+            nameLabel.AddThemeConstantOverride("outline_size", 2);
+            nameLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
+            nameControl = nameLabel;
+        }
+        textRow.AddChild(nameControl);
 
         var damageLabel = new Label
         {
@@ -413,6 +524,36 @@ public static class DpsMeterUi
         textRow.AddChild(percentageLabel);
 
         _moduleGrid!.AddChild(row);
+    }
+
+    private static string BuildRichRowText(DamageRowData rowData)
+    {
+        var escapedName = rowData.Label.EscapeBbcodeTags();
+        var colorHex = NormalizeColorHex(rowData.NameColorHex);
+        var text = $"[b][color=#{colorHex}]{escapedName}[/color][/b]";
+
+        if (rowData.IsLocalPlayer)
+        {
+            text += " [color=#7fd3ff]（你）[/color]";
+        }
+
+        if (!string.IsNullOrWhiteSpace(rowData.Details))
+        {
+            text += $" [color=#9aa4b2]{rowData.Details.EscapeBbcodeTags()}[/color]";
+        }
+
+        return text;
+    }
+
+    private static string NormalizeColorHex(string? value)
+    {
+        var colorHex = value?.Trim().TrimStart('#') ?? string.Empty;
+        if (colorHex.Length != 6 || colorHex.Any(character => !Uri.IsHexDigit(character)))
+        {
+            return "FFFFFF";
+        }
+
+        return colorHex.ToUpperInvariant();
     }
 
     private static void AddDamageSectionHeader(string heading)
@@ -458,8 +599,16 @@ public static class DpsMeterUi
             _scopeIndex = ScopeCurrent;
         }
 
+        if (_scopeIndex == ScopeMultiplayer &&
+            !settings.ShowDealtBreakdown &&
+            !settings.ShowTakenBreakdown)
+        {
+            _scopeIndex = ScopeCurrent;
+        }
+
         if (_scopeIndex != ScopeTaken &&
             _scopeIndex != ScopeBoth &&
+            _scopeIndex != ScopeMultiplayer &&
             !settings.ShowDealtBreakdown)
         {
             _scopeIndex = settings.ShowTakenBreakdown ? ScopeTaken : ScopeCurrent;
@@ -473,11 +622,17 @@ public static class DpsMeterUi
         _scopeOption.SetItemDisabled(
             ScopeBoth,
             !settings.ShowDealtBreakdown || !settings.ShowTakenBreakdown);
+        _scopeOption.SetItemDisabled(
+            ScopeMultiplayer,
+            !settings.ShowDealtBreakdown && !settings.ShowTakenBreakdown);
     }
 
     private static void UpdateNavigationState(int playerCount)
     {
-        var canSwitchPlayer = _scopeIndex != ScopeTotal && playerCount > 1;
+        var canSwitchPlayer =
+            _scopeIndex != ScopeTotal &&
+            _scopeIndex != ScopeMultiplayer &&
+            playerCount > 1;
         _previousPlayerButton!.Disabled = !canSwitchPlayer;
         _nextPlayerButton!.Disabled = !canSwitchPlayer;
         _previousPlayerButton.TooltipText = canSwitchPlayer ? "上一个玩家" : "当前仅有一个统计对象";
@@ -508,7 +663,7 @@ public static class DpsMeterUi
 
     private static void OnScopeSelected(long index)
     {
-        _scopeIndex = Math.Clamp((int)index, ScopeCurrent, ScopeBoth);
+        _scopeIndex = Math.Clamp((int)index, ScopeCurrent, ScopeMultiplayer);
         _selectedPlayerIndex = 0;
         Refresh();
     }
@@ -693,6 +848,7 @@ public static class DpsMeterUi
         _scopeOption.AddItem("受到");
         _scopeOption.AddItem("总计");
         _scopeOption.AddItem("同时");
+        _scopeOption.AddItem("多人");
         _scopeOption.Selected = ScopeCurrent;
         _scopeOption.ItemSelected += OnScopeSelected;
         _scopeOption.AddThemeColorOverride("font_color", PrimaryText);
@@ -841,12 +997,18 @@ public static class DpsMeterUi
         return value is not null && GodotObject.IsInstanceValid(value);
     }
 
-    private sealed record DamageRowData(string Label, long Damage);
+    private sealed record DamageRowData(
+        string Label,
+        long Damage,
+        string? Details = null,
+        string? NameColorHex = null,
+        bool IsLocalPlayer = false);
 
     private sealed record DamageSectionData(
         string? Heading,
         long Total,
-        IReadOnlyList<DamageRowData> Rows);
+        IReadOnlyList<DamageRowData> Rows,
+        bool KeepZeroRows = false);
 
     private sealed record DamageViewData(
         string Title,
