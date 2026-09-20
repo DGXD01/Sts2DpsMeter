@@ -214,6 +214,65 @@ public static class DpsStats
         return RecordDamage(player, attribution, result, damage);
     }
 
+    public static bool RecordBlockGained(Player player, decimal amount)
+    {
+        if (amount <= 0)
+        {
+            return false;
+        }
+
+        var blockGained = (long)decimal.Ceiling(amount);
+        lock (SyncRoot)
+        {
+            if (!_active)
+            {
+                return false;
+            }
+
+            var stats = GetOrCreatePlayer(player);
+            stats.BlockGained += blockGained;
+            stats.BlockGainedByTurn[_currentTurn] =
+                stats.BlockGainedByTurn.GetValueOrDefault(_currentTurn) + blockGained;
+        }
+
+        return true;
+    }
+
+    public static bool RecordEnergySpent(Player player, int amount)
+    {
+        if (amount <= 0)
+        {
+            return false;
+        }
+
+        lock (SyncRoot)
+        {
+            if (!_active)
+            {
+                return false;
+            }
+
+            var stats = GetOrCreatePlayer(player);
+            stats.EnergySpent += amount;
+            stats.EnergySpentByTurn[_currentTurn] =
+                stats.EnergySpentByTurn.GetValueOrDefault(_currentTurn) + amount;
+        }
+
+        return true;
+    }
+
+    private static PlayerAccumulator GetOrCreatePlayer(Player player)
+    {
+        if (!Players.TryGetValue(player.NetId, out var stats))
+        {
+            stats = CreatePlayerAccumulator(player);
+            Players.Add(player.NetId, stats);
+        }
+
+        ApplyPlayerMetadata(stats, player);
+        return stats;
+    }
+
     private static bool RecordDamage(
         Player player,
         DamageAttribution attribution,
@@ -273,10 +332,14 @@ public static class DpsStats
                 case DamageCategory.Incoming:
                     stats.IncomingDamage += damage;
                     stats.IncomingHits++;
+                    stats.IncomingDamageByTurn[_currentTurn] =
+                        stats.IncomingDamageByTurn.GetValueOrDefault(_currentTurn) + damage;
                     break;
                 case DamageCategory.SelfLoss:
                     stats.SelfLossDamage += damage;
                     stats.SelfLossHits++;
+                    stats.SelfLossDamageByTurn[_currentTurn] =
+                        stats.SelfLossDamageByTurn.GetValueOrDefault(_currentTurn) + damage;
                     break;
             }
         }
@@ -298,6 +361,8 @@ public static class DpsStats
                     player.NameColorHex,
                     player.IsLocalPlayer,
                     player.TotalDamage,
+                    player.BlockGained,
+                    player.EnergySpent,
                     player.HitCount,
                     player.MaxHit,
                     player.MaxHitSource,
@@ -342,7 +407,8 @@ public static class DpsStats
         {
             GD.Print(
                 $"[{ModEntry.ModId}] {player.DisplayName}：输出 {player.TotalDamage}，" +
-                $"格挡 {player.BlockedDamage}，掉血 {player.EffectiveHpDamage}，过量 {player.OverkillDamage}，" +
+                $"获得格挡 {player.BlockGained}，消耗能量 {player.EnergySpent}，" +
+                $"敌方吸收 {player.BlockedDamage}，掉血 {player.EffectiveHpDamage}，过量 {player.OverkillDamage}，" +
                 $"命中 {player.HitCount}，最高单次 {player.MaxHit}（{player.MaxHitSource}），" +
                 $"DPS {player.Dps:F2}，DPT {player.Dpt:F2}，承伤 {player.IncomingDamage}，自损 {player.SelfLossDamage}");
 
@@ -393,6 +459,10 @@ public static class DpsStats
     private static IReadOnlyList<TurnStatsSnapshot> BuildTurnSnapshots(PlayerAccumulator player)
     {
         return player.DamageByTurn.Keys
+            .Concat(player.BlockGainedByTurn.Keys)
+            .Concat(player.EnergySpentByTurn.Keys)
+            .Concat(player.IncomingDamageByTurn.Keys)
+            .Concat(player.SelfLossDamageByTurn.Keys)
             .Concat(player.CardsByTurn.Keys)
             .Concat(player.DamageByMechanismByTurn.Keys)
             .Distinct()
@@ -400,6 +470,10 @@ public static class DpsStats
             .Select(turn => new TurnStatsSnapshot(
                 turn,
                 player.DamageByTurn.GetValueOrDefault(turn),
+                player.BlockGainedByTurn.GetValueOrDefault(turn),
+                player.EnergySpentByTurn.GetValueOrDefault(turn),
+                player.IncomingDamageByTurn.GetValueOrDefault(turn),
+                player.SelfLossDamageByTurn.GetValueOrDefault(turn),
                 player.CardsByTurn.TryGetValue(turn, out var cards)
                     ? cards.Values
                         .OrderByDescending(card => card.Damage)
@@ -658,6 +732,10 @@ public static class DpsStats
 
         public long TotalDamage { get; set; }
 
+        public long BlockGained { get; set; }
+
+        public long EnergySpent { get; set; }
+
         public long EffectiveHpDamage { get; set; }
 
         public long BlockedDamage { get; set; }
@@ -687,6 +765,14 @@ public static class DpsStats
         public Dictionary<string, SourceAccumulator> SelfLossBySource { get; } = new();
 
         public Dictionary<int, long> DamageByTurn { get; } = new();
+
+        public Dictionary<int, long> BlockGainedByTurn { get; } = new();
+
+        public Dictionary<int, long> EnergySpentByTurn { get; } = new();
+
+        public Dictionary<int, long> IncomingDamageByTurn { get; } = new();
+
+        public Dictionary<int, long> SelfLossDamageByTurn { get; } = new();
 
         public Dictionary<int, Dictionary<string, CardDamageAccumulator>> CardsByTurn { get; } = new();
 

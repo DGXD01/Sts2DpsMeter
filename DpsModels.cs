@@ -47,6 +47,10 @@ public sealed record MechanismDamageSnapshot(
 public sealed record TurnStatsSnapshot(
     int Turn,
     long Damage,
+    long BlockGained,
+    long EnergySpent,
+    long IncomingDamage,
+    long SelfLossDamage,
     IReadOnlyList<CardDamageSnapshot> Cards,
     IReadOnlyList<MechanismDamageSnapshot> Mechanisms);
 
@@ -58,6 +62,8 @@ public sealed record PlayerStatsSnapshot(
     string NameColorHex,
     bool IsLocalPlayer,
     long TotalDamage,
+    long BlockGained,
+    long EnergySpent,
     int HitCount,
     int MaxHit,
     string MaxHitSource,

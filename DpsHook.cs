@@ -37,6 +37,47 @@ public sealed class DpsHook : AbstractModel
         return Task.CompletedTask;
     }
 
+    public override Task AfterBlockGained(
+        Creature creature,
+        decimal amount,
+        ValueProp props,
+        CardModel? cardSource)
+    {
+        try
+        {
+            var player = creature.IsPlayer
+                ? creature.Player
+                : creature.IsPet ? creature.PetOwner : null;
+            if (player is not null && DpsStats.RecordBlockGained(player, amount))
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 记录格挡获得失败：{exception}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public override Task AfterEnergySpent(CardModel card, int amount)
+    {
+        try
+        {
+            if (card?.Owner is not null && DpsStats.RecordEnergySpent(card.Owner, amount))
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 记录能量消耗失败：{exception}");
+        }
+
+        return Task.CompletedTask;
+    }
+
     public override Task AfterDiedToDoom(
         PlayerChoiceContext choiceContext,
         IReadOnlyList<Creature> creatures)
