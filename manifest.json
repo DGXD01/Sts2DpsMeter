@@ -1,8 +1,8 @@
 {
   "id": "Sts2DpsMeter",
-  "name": "Sts2 DPS Meter - 铁甲战士测试版",
+  "name": "Sts2 DPS Meter - 多角色伤害统计（测试版）",
   "author": "DGXD",
-  "description": "铁甲战士伤害统计测试版：HUD 仅保留玩家造成伤害和玩家受到伤害两个可拼接模块，设置通过 HUD 内的“设”按钮打开。",
+  "description": "多角色伤害统计测试版：HUD 仅保留玩家造成伤害和玩家受到伤害两个可拼接模块，设置通过 HUD 内的“设”按钮打开。",
   "version": "0.2.1",
   "min_game_version": "0.107.1",
   "has_pck": false,
