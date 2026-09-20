@@ -240,7 +240,8 @@ public static class DpsMeterUi
         DpsMeterSettingsData settings,
         CombatStatsSnapshot snapshot)
     {
-        if (!HasEnabledModules(settings))
+        var isMultiplayer = snapshot.Players.Count > 1;
+        if (!HasEnabledModules(settings, isMultiplayer))
         {
             return new DamageViewData("未启用统计模块", Array.Empty<DamageSectionData>());
         }
@@ -252,7 +253,6 @@ public static class DpsMeterUi
 
         _selectedPlayerIndex = Math.Clamp(_selectedPlayerIndex, 0, snapshot.Players.Count - 1);
         var player = snapshot.Players[_selectedPlayerIndex];
-        var isMultiplayer = snapshot.Players.Count > 1;
 
         if (_scopeIndex == ScopeTotal)
         {
@@ -306,6 +306,46 @@ public static class DpsMeterUi
             titleParts.Add($"能量 {player.EnergySpent}");
         }
 
+        if (isMultiplayer && settings.ShowEnergyGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友能量",
+                player.EnergyGivenToAllies,
+                BuildMetricRows("给予队友能量", player.EnergyGivenToAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友能量 {player.EnergyGivenToAllies}");
+        }
+
+        if (isMultiplayer && settings.ShowBlockGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友护盾",
+                player.BlockGivenToAllies,
+                BuildMetricRows("给予队友护盾", player.BlockGivenToAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友护盾 {player.BlockGivenToAllies}");
+        }
+
+        if (isMultiplayer && settings.ShowHealingGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友回血",
+                player.HealingGivenToAllies,
+                BuildMetricRows("给予队友回血", player.HealingGivenToAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友回血 {player.HealingGivenToAllies}");
+        }
+
+        if (isMultiplayer && settings.ShowCardsDrawnForAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友抽牌",
+                player.CardsDrawnForAllies,
+                BuildMetricRows("为队友抽牌", player.CardsDrawnForAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友抽牌 {player.CardsDrawnForAllies}");
+        }
+
         return new DamageViewData(
             BuildTitle(scopeLabel, isMultiplayer, player.DisplayName, titleParts),
             sections);
@@ -323,6 +363,10 @@ public static class DpsMeterUi
         var damage = turn?.Damage ?? 0;
         var blockGained = turn?.BlockGained ?? 0;
         var energySpent = turn?.EnergySpent ?? 0;
+        var energyGivenToAllies = turn?.EnergyGivenToAllies ?? 0;
+        var blockGivenToAllies = turn?.BlockGivenToAllies ?? 0;
+        var healingGivenToAllies = turn?.HealingGivenToAllies ?? 0;
+        var cardsDrawnForAllies = turn?.CardsDrawnForAllies ?? 0;
         var takenDamage = (turn?.IncomingDamage ?? 0) + (turn?.SelfLossDamage ?? 0);
 
         if (settings.ShowDealtBreakdown)
@@ -364,6 +408,46 @@ public static class DpsMeterUi
             titleParts.Add($"能量 {energySpent}");
         }
 
+        if (isMultiplayer && settings.ShowEnergyGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友能量",
+                energyGivenToAllies,
+                BuildMetricRows("给予队友能量", energyGivenToAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友能量 {energyGivenToAllies}");
+        }
+
+        if (isMultiplayer && settings.ShowBlockGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友护盾",
+                blockGivenToAllies,
+                BuildMetricRows("给予队友护盾", blockGivenToAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友护盾 {blockGivenToAllies}");
+        }
+
+        if (isMultiplayer && settings.ShowHealingGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友回血",
+                healingGivenToAllies,
+                BuildMetricRows("给予队友回血", healingGivenToAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友回血 {healingGivenToAllies}");
+        }
+
+        if (isMultiplayer && settings.ShowCardsDrawnForAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "给队友抽牌",
+                cardsDrawnForAllies,
+                BuildMetricRows("为队友抽牌", cardsDrawnForAllies),
+                KeepZeroRows: true));
+            titleParts.Add($"队友抽牌 {cardsDrawnForAllies}");
+        }
+
         return new DamageViewData(
             BuildTitle("本回合", isMultiplayer, player.DisplayName, titleParts),
             sections);
@@ -383,6 +467,10 @@ public static class DpsMeterUi
         var takenTotal = snapshot.Players.Sum(player => player.IncomingDamage + player.SelfLossDamage);
         var blockTotal = snapshot.Players.Sum(player => player.BlockGained);
         var energyTotal = snapshot.Players.Sum(player => player.EnergySpent);
+        var energyGivenTotal = snapshot.Players.Sum(player => player.EnergyGivenToAllies);
+        var blockGivenTotal = snapshot.Players.Sum(player => player.BlockGivenToAllies);
+        var healingGivenTotal = snapshot.Players.Sum(player => player.HealingGivenToAllies);
+        var cardsDrawnForAlliesTotal = snapshot.Players.Sum(player => player.CardsDrawnForAllies);
         var sections = new List<DamageSectionData>();
         var titleParts = new List<string>();
 
@@ -426,18 +514,65 @@ public static class DpsMeterUi
             titleParts.Add($"能量 {energyTotal}");
         }
 
+        if (settings.ShowEnergyGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "队友能量排行",
+                energyGivenTotal,
+                BuildMultiplayerAllySupportRows(snapshot, player => player.EnergyGivenToAllies, "给予队友能量"),
+                KeepZeroRows: true));
+            titleParts.Add($"队友能量 {energyGivenTotal}");
+        }
+
+        if (settings.ShowBlockGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "队友护盾排行",
+                blockGivenTotal,
+                BuildMultiplayerAllySupportRows(snapshot, player => player.BlockGivenToAllies, "给予队友护盾"),
+                KeepZeroRows: true));
+            titleParts.Add($"队友护盾 {blockGivenTotal}");
+        }
+
+        if (settings.ShowHealingGivenToAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "队友回血排行",
+                healingGivenTotal,
+                BuildMultiplayerAllySupportRows(snapshot, player => player.HealingGivenToAllies, "给予队友回血"),
+                KeepZeroRows: true));
+            titleParts.Add($"队友回血 {healingGivenTotal}");
+        }
+
+        if (settings.ShowCardsDrawnForAllies)
+        {
+            sections.Add(new DamageSectionData(
+                "队友抽牌排行",
+                cardsDrawnForAlliesTotal,
+                BuildMultiplayerAllySupportRows(snapshot, player => player.CardsDrawnForAllies, "为队友抽牌"),
+                KeepZeroRows: true));
+            titleParts.Add($"队友抽牌 {cardsDrawnForAlliesTotal}");
+        }
+
         return new DamageViewData(
             BuildTitle("总计", isMultiplayer: true, playerName: null, titleParts),
             sections);
     }
 
 
-    private static bool HasEnabledModules(DpsMeterSettingsData settings)
+    private static bool HasEnabledModules(
+        DpsMeterSettingsData settings,
+        bool isMultiplayer)
     {
         return settings.ShowDealtBreakdown
             || settings.ShowTakenBreakdown
             || settings.ShowBlockGained
-            || settings.ShowEnergySpent;
+            || settings.ShowEnergySpent
+            || (isMultiplayer && (
+                settings.ShowEnergyGivenToAllies
+                || settings.ShowBlockGivenToAllies
+                || settings.ShowHealingGivenToAllies
+                || settings.ShowCardsDrawnForAllies));
     }
 
     private static string BuildTitle(
@@ -504,6 +639,23 @@ public static class DpsMeterUi
                 player.DisplayName,
                 player.EnergySpent,
                 $"{player.CharacterName} · 消耗能量 {player.EnergySpent}",
+                player.NameColorHex,
+                player.IsLocalPlayer))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<DamageRowData> BuildMultiplayerAllySupportRows(
+        CombatStatsSnapshot snapshot,
+        Func<PlayerStatsSnapshot, long> selector,
+        string label)
+    {
+        return snapshot.Players
+            .OrderByDescending(selector)
+            .ThenBy(player => player.PlayerNetId)
+            .Select(player => new DamageRowData(
+                player.DisplayName,
+                selector(player),
+                $"{player.CharacterName} · {label} {selector(player)}",
                 player.NameColorHex,
                 player.IsLocalPlayer))
             .ToArray();

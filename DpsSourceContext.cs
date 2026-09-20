@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
@@ -49,6 +50,9 @@ public static class DpsSourceContext
             var relicFlashPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(RelicFlashPostfix));
             var orbTriggerPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(OrbTriggerPostfix));
             var doomKillPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(DoomKillPrefix));
+            var energyGainPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(EnergyGainPostfix));
+            var healPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(HealPrefix));
+            var healPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(HealPostfix));
             var doomKillMethod = AccessTools.Method(
                 typeof(DoomPower),
                 nameof(DoomPower.DoomKill),
@@ -74,6 +78,23 @@ public static class DpsSourceContext
                 AccessTools.Method(typeof(OrbModel), nameof(OrbModel.Trigger), Type.EmptyTypes),
                 orbTriggerPostfix,
                 "OrbModel.Trigger");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(
+                    typeof(PlayerCombatState),
+                    nameof(PlayerCombatState.GainEnergy),
+                    new[] { typeof(decimal) }),
+                energyGainPostfix,
+                "PlayerCombatState.GainEnergy");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(
+                    typeof(Creature),
+                    nameof(Creature.HealInternal),
+                    new[] { typeof(decimal) }),
+                healPrefix,
+                healPostfix,
+                "Creature.HealInternal");
             PatchRequiredPrefix(
                 harmony,
                 doomKillMethod,
@@ -119,6 +140,45 @@ public static class DpsSourceContext
         }
 
         return Array.Empty<AbstractModel>();
+    }
+
+    public static Player? ResolveSourcePlayer(
+        PlayerChoiceContext? context,
+        Creature? target,
+        AbstractModel? explicitModel = null)
+    {
+        try
+        {
+            var explicitSource = ResolveModelSource(explicitModel);
+            if (explicitSource is not null)
+            {
+                return explicitSource;
+            }
+
+            if (context is not null)
+            {
+                foreach (var model in GetModelChain(context))
+                {
+                    var source = ResolveModelSource(model);
+                    if (source is not null)
+                    {
+                        return source;
+                    }
+                }
+            }
+
+            var recentSource = ResolveModelSource(GetRecentModel<AbstractModel>());
+            if (recentSource is not null)
+            {
+                return recentSource;
+            }
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 解析队友增益来源失败：{exception}");
+        }
+
+        return null;
     }
 
     public static void RecordRecentModel(AbstractModel model)
@@ -192,6 +252,63 @@ public static class DpsSourceContext
         RecordRecentOrb(__instance);
     }
 
+    private static void EnergyGainPostfix(PlayerCombatState __instance, decimal amount)
+    {
+        try
+        {
+            var target = GetPlayerForCombatState(__instance);
+            if (target is null || amount <= 0)
+            {
+                return;
+            }
+
+            var source = ResolveSourcePlayer(null, target.Creature);
+            if (DpsStats.RecordAllySupport(
+                    source,
+                    target,
+                    AllySupportKind.EnergyGiven,
+                    amount))
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 记录队友能量失败：{exception}");
+        }
+    }
+
+    private static void HealPrefix(Creature __instance, out int __state)
+    {
+        __state = __instance.CurrentHp;
+    }
+
+    private static void HealPostfix(Creature __instance, int __state)
+    {
+        try
+        {
+            var healed = __instance.CurrentHp - __state;
+            if (healed <= 0 || !__instance.IsPlayer || __instance.Player is null)
+            {
+                return;
+            }
+
+            var source = ResolveSourcePlayer(null, __instance);
+            if (DpsStats.RecordAllySupport(
+                    source,
+                    __instance.Player,
+                    AllySupportKind.HealingGiven,
+                    healed))
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 记录队友回血失败：{exception}");
+        }
+    }
+
     private static void DoomKillPrefix(IReadOnlyList<Creature> creatures)
     {
         try
@@ -252,6 +369,84 @@ public static class DpsSourceContext
         {
             GD.PushWarning($"[{ModEntry.ModId}] 安装可选补丁失败：{description}，{exception.Message}");
         }
+    }
+
+    private static void PatchOptional(
+        Harmony harmony,
+        MethodBase? original,
+        MethodInfo? prefix,
+        MethodInfo? postfix,
+        string description)
+    {
+        if (original is null || prefix is null || postfix is null)
+        {
+            GD.PushWarning($"[{ModEntry.ModId}] 跳过可选补丁：{description} 不存在。");
+            return;
+        }
+
+        try
+        {
+            harmony.Patch(
+                original,
+                prefix: new HarmonyMethod(prefix),
+                postfix: new HarmonyMethod(postfix));
+        }
+        catch (Exception exception)
+        {
+            GD.PushWarning($"[{ModEntry.ModId}] 安装可选补丁失败：{description}，{exception.Message}");
+        }
+    }
+
+    private static Player? ResolveModelSource(AbstractModel? model)
+    {
+        if (model is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return model switch
+            {
+                CardModel card => card.Owner,
+                PotionModel potion => potion.Owner,
+                RelicModel relic => relic.Owner,
+                OrbModel orb => orb.Owner,
+                PowerModel power => GetPlayerForCreature(power.Applier),
+                _ => null
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Player? GetPlayerForCombatState(PlayerCombatState state)
+    {
+        try
+        {
+            return AccessTools.Field(typeof(PlayerCombatState), "_player")?.GetValue(state) as Player;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Player? GetPlayerForCreature(Creature? creature)
+    {
+        if (creature is null)
+        {
+            return null;
+        }
+
+        if (creature.IsPlayer)
+        {
+            return creature.Player;
+        }
+
+        return creature.IsPet ? creature.PetOwner : null;
     }
 
     private static void Push(PlayerChoiceContext context, AbstractModel model)

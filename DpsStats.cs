@@ -14,6 +14,14 @@ using MegaCrit.Sts2.Core.ValueProps;
 
 namespace Sts2DpsMeter;
 
+public enum AllySupportKind
+{
+    EnergyGiven,
+    BlockGiven,
+    HealingGiven,
+    CardDrawn
+}
+
 public static class DpsStats
 {
     private const string UnknownSource = "其他";
@@ -261,6 +269,56 @@ public static class DpsStats
         return true;
     }
 
+    public static bool RecordAllySupport(
+        Player? source,
+        Player? target,
+        AllySupportKind kind,
+        decimal amount)
+    {
+        if (source is null || target is null || source.NetId == target.NetId || amount <= 0)
+        {
+            return false;
+        }
+
+        var value = (long)decimal.Ceiling(amount);
+        lock (SyncRoot)
+        {
+            if (!_active)
+            {
+                return false;
+            }
+
+            var stats = GetOrCreatePlayer(source);
+            switch (kind)
+            {
+                case AllySupportKind.EnergyGiven:
+                    stats.EnergyGivenToAllies += value;
+                    stats.EnergyGivenToAlliesByTurn[_currentTurn] =
+                        stats.EnergyGivenToAlliesByTurn.GetValueOrDefault(_currentTurn) + value;
+                    break;
+                case AllySupportKind.BlockGiven:
+                    stats.BlockGivenToAllies += value;
+                    stats.BlockGivenToAlliesByTurn[_currentTurn] =
+                        stats.BlockGivenToAlliesByTurn.GetValueOrDefault(_currentTurn) + value;
+                    break;
+                case AllySupportKind.HealingGiven:
+                    stats.HealingGivenToAllies += value;
+                    stats.HealingGivenToAlliesByTurn[_currentTurn] =
+                        stats.HealingGivenToAlliesByTurn.GetValueOrDefault(_currentTurn) + value;
+                    break;
+                case AllySupportKind.CardDrawn:
+                    stats.CardsDrawnForAllies += value;
+                    stats.CardsDrawnForAlliesByTurn[_currentTurn] =
+                        stats.CardsDrawnForAlliesByTurn.GetValueOrDefault(_currentTurn) + value;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
     private static PlayerAccumulator GetOrCreatePlayer(Player player)
     {
         if (!Players.TryGetValue(player.NetId, out var stats))
@@ -363,6 +421,10 @@ public static class DpsStats
                     player.TotalDamage,
                     player.BlockGained,
                     player.EnergySpent,
+                    player.EnergyGivenToAllies,
+                    player.BlockGivenToAllies,
+                    player.HealingGivenToAllies,
+                    player.CardsDrawnForAllies,
                     player.HitCount,
                     player.MaxHit,
                     player.MaxHitSource,
@@ -408,6 +470,8 @@ public static class DpsStats
             GD.Print(
                 $"[{ModEntry.ModId}] {player.DisplayName}：输出 {player.TotalDamage}，" +
                 $"获得格挡 {player.BlockGained}，消耗能量 {player.EnergySpent}，" +
+                $"给队友能量 {player.EnergyGivenToAllies}，给队友护盾 {player.BlockGivenToAllies}，" +
+                $"给队友回血 {player.HealingGivenToAllies}，给队友抽牌 {player.CardsDrawnForAllies}，" +
                 $"敌方吸收 {player.BlockedDamage}，掉血 {player.EffectiveHpDamage}，过量 {player.OverkillDamage}，" +
                 $"命中 {player.HitCount}，最高单次 {player.MaxHit}（{player.MaxHitSource}），" +
                 $"DPS {player.Dps:F2}，DPT {player.Dpt:F2}，承伤 {player.IncomingDamage}，自损 {player.SelfLossDamage}");
@@ -461,6 +525,10 @@ public static class DpsStats
         return player.DamageByTurn.Keys
             .Concat(player.BlockGainedByTurn.Keys)
             .Concat(player.EnergySpentByTurn.Keys)
+            .Concat(player.EnergyGivenToAlliesByTurn.Keys)
+            .Concat(player.BlockGivenToAlliesByTurn.Keys)
+            .Concat(player.HealingGivenToAlliesByTurn.Keys)
+            .Concat(player.CardsDrawnForAlliesByTurn.Keys)
             .Concat(player.IncomingDamageByTurn.Keys)
             .Concat(player.SelfLossDamageByTurn.Keys)
             .Concat(player.CardsByTurn.Keys)
@@ -472,6 +540,10 @@ public static class DpsStats
                 player.DamageByTurn.GetValueOrDefault(turn),
                 player.BlockGainedByTurn.GetValueOrDefault(turn),
                 player.EnergySpentByTurn.GetValueOrDefault(turn),
+                player.EnergyGivenToAlliesByTurn.GetValueOrDefault(turn),
+                player.BlockGivenToAlliesByTurn.GetValueOrDefault(turn),
+                player.HealingGivenToAlliesByTurn.GetValueOrDefault(turn),
+                player.CardsDrawnForAlliesByTurn.GetValueOrDefault(turn),
                 player.IncomingDamageByTurn.GetValueOrDefault(turn),
                 player.SelfLossDamageByTurn.GetValueOrDefault(turn),
                 player.CardsByTurn.TryGetValue(turn, out var cards)
@@ -736,6 +808,14 @@ public static class DpsStats
 
         public long EnergySpent { get; set; }
 
+        public long EnergyGivenToAllies { get; set; }
+
+        public long BlockGivenToAllies { get; set; }
+
+        public long HealingGivenToAllies { get; set; }
+
+        public long CardsDrawnForAllies { get; set; }
+
         public long EffectiveHpDamage { get; set; }
 
         public long BlockedDamage { get; set; }
@@ -769,6 +849,14 @@ public static class DpsStats
         public Dictionary<int, long> BlockGainedByTurn { get; } = new();
 
         public Dictionary<int, long> EnergySpentByTurn { get; } = new();
+
+        public Dictionary<int, long> EnergyGivenToAlliesByTurn { get; } = new();
+
+        public Dictionary<int, long> BlockGivenToAlliesByTurn { get; } = new();
+
+        public Dictionary<int, long> HealingGivenToAlliesByTurn { get; } = new();
+
+        public Dictionary<int, long> CardsDrawnForAlliesByTurn { get; } = new();
 
         public Dictionary<int, long> IncomingDamageByTurn { get; } = new();
 

@@ -52,10 +52,54 @@ public sealed class DpsHook : AbstractModel
             {
                 DpsMeterUi.RequestImmediateRefresh();
             }
+
+            if (player is not null)
+            {
+                var source = DpsSourceContext.ResolveSourcePlayer(null, creature, cardSource);
+                if (DpsStats.RecordAllySupport(
+                        source,
+                        player,
+                        AllySupportKind.BlockGiven,
+                        amount))
+                {
+                    DpsMeterUi.RequestImmediateRefresh();
+                }
+            }
         }
         catch (Exception exception)
         {
             GD.PushError($"[{ModEntry.ModId}] 记录格挡获得失败：{exception}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public override Task AfterCardDrawn(
+        PlayerChoiceContext choiceContext,
+        CardModel card,
+        bool fromHandDraw)
+    {
+        try
+        {
+            if (fromHandDraw || card?.Owner is null)
+            {
+                return Task.CompletedTask;
+            }
+
+            var target = card.Owner;
+            var source = DpsSourceContext.ResolveSourcePlayer(choiceContext, target.Creature);
+            if (DpsStats.RecordAllySupport(
+                    source,
+                    target,
+                    AllySupportKind.CardDrawn,
+                    1m))
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
+        }
+        catch (Exception exception)
+        {
+            GD.PushError($"[{ModEntry.ModId}] 记录队友抽牌失败：{exception}");
         }
 
         return Task.CompletedTask;

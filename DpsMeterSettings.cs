@@ -8,7 +8,7 @@ namespace Sts2DpsMeter;
 
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 3;
+    public int SchemaVersion { get; set; } = 4;
     public bool StartVisible { get; set; } = true;
     public bool LockPosition { get; set; }
     public bool CompactMode { get; set; }
@@ -16,6 +16,10 @@ public sealed class DpsMeterSettingsData
     public bool ShowTakenBreakdown { get; set; } = true;
     public bool ShowBlockGained { get; set; }
     public bool ShowEnergySpent { get; set; }
+    public bool ShowEnergyGivenToAllies { get; set; }
+    public bool ShowBlockGivenToAllies { get; set; }
+    public bool ShowHealingGivenToAllies { get; set; }
+    public bool ShowCardsDrawnForAllies { get; set; }
     public int Columns { get; set; } = 2;
     public int MaxRows { get; set; } = 5;
     public float PanelOpacity { get; set; } = 0.92f;
@@ -30,7 +34,7 @@ public static class DpsMeterSettings
     public const float MaxUiScale = 2.0f;
     public const float UiScaleStep = 0.05f;
 
-    private const int CurrentSchemaVersion = 3;
+    private const int CurrentSchemaVersion = 4;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -153,6 +157,10 @@ public static class DpsMeterSettings
             ShowTakenBreakdown = source.ShowTakenBreakdown,
             ShowBlockGained = source.ShowBlockGained,
             ShowEnergySpent = source.ShowEnergySpent,
+            ShowEnergyGivenToAllies = source.ShowEnergyGivenToAllies,
+            ShowBlockGivenToAllies = source.ShowBlockGivenToAllies,
+            ShowHealingGivenToAllies = source.ShowHealingGivenToAllies,
+            ShowCardsDrawnForAllies = source.ShowCardsDrawnForAllies,
             Columns = source.Columns,
             MaxRows = source.MaxRows,
             PanelOpacity = source.PanelOpacity,

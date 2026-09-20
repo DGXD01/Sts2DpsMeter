@@ -176,6 +176,27 @@ public static class DpsMeterSettingsUi
             settings.ShowEnergySpent = value;
             SaveAndRefresh();
         });
+        AddToggle("给队友能量", settings.ShowEnergyGivenToAllies, value =>
+        {
+            settings.ShowEnergyGivenToAllies = value;
+            SaveAndRefresh();
+        });
+        AddToggle("给队友护盾", settings.ShowBlockGivenToAllies, value =>
+        {
+            settings.ShowBlockGivenToAllies = value;
+            SaveAndRefresh();
+        });
+        AddToggle("给队友回血", settings.ShowHealingGivenToAllies, value =>
+        {
+            settings.ShowHealingGivenToAllies = value;
+            SaveAndRefresh();
+        });
+        AddToggle("给队友抽牌", settings.ShowCardsDrawnForAllies, value =>
+        {
+            settings.ShowCardsDrawnForAllies = value;
+            SaveAndRefresh();
+        });
+        AddText("队友增益仅在多人模式显示；单人模式下这些开关不会新增 HUD 模块。", MutedColor, 11);
         AddText("可在下方勾选需要显示的模块；统计范围仅切换数据的时间维度，不改变模块开关。", MutedColor, 11);
 
         AddSection("布局与密度");
