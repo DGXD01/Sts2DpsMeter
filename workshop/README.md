@@ -1,8 +1,14 @@
-# Steam 上传内容
+# Sts2 DPS Meter
+
+本 Mod 为《杀戮尖塔 2》提供战斗数据统计：可查看本回合、本场战斗和总计伤害，并在多人游戏中按玩家显示输出排行。还可按需显示格挡、能量使用，以及给队友能量、护盾、回血、抽牌等辅助统计，便于复盘战斗与比较队伍贡献。所有统计模块均可在 HUD 设置中独立开关。
+
+## 上传内容
 
 构建脚本会把以下文件复制到这里：
 
-- Sts2DpsMeter.dll
-- manifest.json
+- `Sts2DpsMeter.dll`
+- `manifest.json`
 
-游戏自带的 sts2.dll、GodotSharp.dll 和 0Harmony.dll 只用于编译，不放入创意工坊内容。
+游戏自带的 `sts2.dll`、`GodotSharp.dll` 和 `0Harmony.dll` 只用于编译，不进入创意工坊内容。
+
+首次上传后，`mod_id.txt` 应保留在 `workshop/` 根目录并提交到仓库，用于后续更新已有条目。
