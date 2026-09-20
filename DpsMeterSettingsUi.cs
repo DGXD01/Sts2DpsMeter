@@ -223,13 +223,11 @@ public static class DpsMeterSettingsUi
         AddSliderRow(DpsLocalization.Get("伤害来源显示行数", "Damage source rows"), settings.MaxRows, 1, 12, 1, value =>
         {
             settings.MaxRows = Math.Clamp((int)value, 1, 12);
-            SaveAndRefresh();
         });
 
         AddSliderRow(DpsLocalization.Get("面板透明度", "Panel opacity"), settings.PanelOpacity, 0.35, 1.0, 0.01, value =>
         {
             settings.PanelOpacity = Mathf.Clamp((float)value, 0.35f, 1f);
-            SaveAndRefresh();
         });
         AddSliderRow(
             DpsLocalization.Get("界面缩放", "UI scale"),
@@ -240,7 +238,6 @@ public static class DpsMeterSettingsUi
             value =>
         {
             settings.UiScale = DpsMeterSettings.ClampUiScale((float)value);
-            SaveAndRefresh();
         });
         AddText(DpsLocalization.Get("界面缩放仅通过上方滑块调整，不注册键盘或鼠标滚轮热键。", "UI scale is adjusted only by the slider above; no keyboard or mouse-wheel hotkeys are registered."), MutedColor, 11);
 
@@ -372,6 +369,13 @@ public static class DpsMeterSettingsUi
         {
             valueLabel.Text = FormatSettingValue((float)next, step);
             changed(next);
+        };
+        slider.DragEnded += valueChanged =>
+        {
+            if (valueChanged)
+            {
+                SaveAndRefresh();
+            }
         };
         row.AddChild(slider);
         row.AddChild(valueLabel);
