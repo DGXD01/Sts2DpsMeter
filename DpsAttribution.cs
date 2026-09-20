@@ -122,6 +122,14 @@ public static class DpsAttribution
         "ThunderPower"
     };
 
+    // 反伤能力只会在拥有者受击后伤害攻击者，不能作为拥有者自身受伤的来源。
+    private static readonly HashSet<string> SelfReactiveDamagePowerNames = new(StringComparer.Ordinal)
+    {
+        "FlameBarrierPower",
+        "ReflectPower",
+        "ThornsPower"
+    };
+
     private static readonly Dictionary<string, string> SemanticTags = new(StringComparer.Ordinal)
     {
         ["PoisonPower"] = "中毒/持续伤害",
@@ -170,7 +178,7 @@ public static class DpsAttribution
         CardModel? cardSource)
     {
         var chain = DpsSourceContext.GetModelChain(choiceContext);
-        var directModel = cardSource ?? SelectDirectModel(chain);
+        var directModel = cardSource ?? SelectDirectModel(chain, target);
         var directFromGameStack = directModel is not null;
 
         // 回合结束球体被动不经 OrbCmd，使用 Trigger 后保存的独立近时来源。
@@ -183,7 +191,8 @@ public static class DpsAttribution
         if (directModel is null)
         {
             var recentPower = DpsSourceContext.GetRecentModel<PowerModel>();
-            if (recentPower is not null && IsDamagePower(recentPower))
+            if (recentPower is not null && IsDamagePower(recentPower)
+                && IsPlausibleIncomingDamagePower(recentPower, target))
             {
                 directModel = recentPower;
             }
@@ -342,7 +351,7 @@ public static class DpsAttribution
             null,
             accountablePlayer);
     }
-    private static AbstractModel? SelectDirectModel(IReadOnlyList<AbstractModel> chain)
+    private static AbstractModel? SelectDirectModel(IReadOnlyList<AbstractModel> chain, Creature target)
     {
         foreach (var model in chain)
         {
@@ -356,7 +365,8 @@ public static class DpsAttribution
                 return model;
             }
 
-            if (model is PowerModel power && IsDamagePower(power))
+            if (model is PowerModel power && IsDamagePower(power)
+                && IsPlausibleIncomingDamagePower(power, target))
             {
                 return power;
             }
@@ -368,6 +378,12 @@ public static class DpsAttribution
     private static bool IsDamagePower(PowerModel power)
     {
         return DamagePowerNames.Contains(power.GetType().Name);
+    }
+
+    private static bool IsPlausibleIncomingDamagePower(PowerModel power, Creature target)
+    {
+        return !SelfReactiveDamagePowerNames.Contains(power.GetType().Name)
+            || !ReferenceEquals(power.Owner, target);
     }
 
     private static T? FindFirst<T>(IReadOnlyList<AbstractModel> chain) where T : AbstractModel
@@ -388,10 +404,10 @@ public static class DpsAttribution
         var damage = result.BlockedDamage + result.UnblockedDamage + result.OverkillDamage;
         var candidates = new List<PowerModel>();
 
-        AddPowers(candidates, target.Powers, target, damage);
+        AddPowers(candidates, target.Powers, target, target, damage);
         if (dealer is not null)
         {
-            AddPowers(candidates, dealer.Powers, dealer, damage);
+            AddPowers(candidates, dealer.Powers, dealer, target, damage);
         }
 
         return candidates
@@ -404,12 +420,19 @@ public static class DpsAttribution
         ICollection<PowerModel> candidates,
         IEnumerable<PowerModel> powers,
         Creature expectedOwner,
+        Creature damageTarget,
         int damage)
     {
         foreach (var power in powers)
         {
             var powerName = power.GetType().Name;
             if (!DamagePowerNames.Contains(powerName))
+            {
+                continue;
+            }
+
+            if (SelfReactiveDamagePowerNames.Contains(powerName)
+                && ReferenceEquals(power.Owner, damageTarget))
             {
                 continue;
             }
