@@ -110,7 +110,7 @@ public static class DpsMeterSettingsUi
 
         var introduction = new Label
         {
-            Text = "伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；标题左右箭头切换玩家，右上角下拉框选择统计范围、“同时”或“多人”，最右侧 +/- 折叠明细。",
+            Text = "“偏好”决定显示哪些独立 HUD；每个勾选项都以长方形框体显示。拖动标题可移动，靠近其他 HUD 边缘会磁力吸附，拖动已吸附 HUD 的上边框或标题可拆分。",
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
@@ -138,6 +138,52 @@ public static class DpsMeterSettingsUi
         ClearChildren(_content!);
         var settings = DpsMeterSettings.Current;
 
+        AddSection("偏好");
+        AddToggle("当前输出", settings.ShowCurrentOutput, value =>
+        {
+            DpsMeterSettings.SetModuleEnabled(settings, DpsMeterSettings.ModuleCurrentOutput, value);
+            SaveAndRefresh();
+        });
+        AddToggle("本回合伤害统计", settings.ShowTurnDamage, value =>
+        {
+            DpsMeterSettings.SetModuleEnabled(settings, DpsMeterSettings.ModuleTurnDamage, value);
+            SaveAndRefresh();
+        });
+        AddToggle("本场战斗伤害统计", settings.ShowCombatDamage, value =>
+        {
+            DpsMeterSettings.SetModuleEnabled(settings, DpsMeterSettings.ModuleCombatDamage, value);
+            SaveAndRefresh();
+        });
+        AddToggle("受到伤害统计", settings.ShowTakenDamage, value =>
+        {
+            DpsMeterSettings.SetModuleEnabled(settings, DpsMeterSettings.ModuleTakenDamage, value);
+            SaveAndRefresh();
+        });
+        AddToggle("多人排行", settings.ShowMultiplayerRanking, value =>
+        {
+            DpsMeterSettings.SetModuleEnabled(settings, DpsMeterSettings.ModuleMultiplayerRanking, value);
+            SaveAndRefresh();
+        });
+        AddToggle("启用磁力吸附", settings.EnableSnapping, value =>
+        {
+            settings.EnableSnapping = value;
+            SaveAndRefresh();
+        });
+        AddText("每个勾选项都是独立的长方形 HUD；拖动标题移动，拖动已吸附 HUD 的上边框或标题可拆分。", MutedColor, 11);
+
+        AddSection("多人排行内容");
+        AddToggle("玩家造成伤害", settings.ShowDealtBreakdown, value =>
+        {
+            settings.ShowDealtBreakdown = value;
+            SaveAndRefresh();
+        });
+        AddToggle("玩家受到伤害", settings.ShowTakenBreakdown, value =>
+        {
+            settings.ShowTakenBreakdown = value;
+            SaveAndRefresh();
+        });
+        AddText("这两个开关只控制“多人排行”HUD 内部是否显示输出和承伤区段。", MutedColor, 11);
+
         AddSection("显示与行为");
         AddToggle("启动时显示 HUD", settings.StartVisible, value =>
         {
@@ -154,19 +200,6 @@ public static class DpsMeterSettingsUi
             settings.CompactMode = value;
             SaveAndRefresh();
         });
-
-        AddSection("统计模块");
-        AddToggle("玩家造成伤害", settings.ShowDealtBreakdown, value =>
-        {
-            settings.ShowDealtBreakdown = value;
-            SaveAndRefresh();
-        });
-        AddToggle("玩家受到伤害", settings.ShowTakenBreakdown, value =>
-        {
-            settings.ShowTakenBreakdown = value;
-            SaveAndRefresh();
-        });
-        AddText("“玩家造成伤害”和“玩家受到伤害”都启用时，HUD 的“同时”选项会并列显示两段明细。", MutedColor, 11);
 
         AddSection("布局与密度");
         AddSliderRow("伤害来源显示行数", settings.MaxRows, 1, 12, 1, value =>
@@ -209,13 +242,14 @@ public static class DpsMeterSettingsUi
         var resetPosition = new Button
         {
             FocusMode = Control.FocusModeEnum.None,
-            Text = "重置 HUD 位置到左上角",
-            TooltipText = "默认位置为 (18, 18)；HUD 未锁定时可直接拖动。"
+            Text = "重置全部 HUD 位置与吸附关系",
+            TooltipText = "全部 HUD 将回到默认网格，并清除模块之间的吸附关系。"
         };
         resetPosition.Pressed += () =>
         {
             settings.PositionX = 18f;
             settings.PositionY = 18f;
+            DpsMeterSettings.ResetModuleLayouts(settings);
             SaveAndRefresh();
         };
         _content!.AddChild(resetPosition);
@@ -245,7 +279,6 @@ public static class DpsMeterSettingsUi
         AddText("配置文件", MutedColor, 12);
         AddText(DpsMeterSettings.FilePath, MutedColor, 11);
     }
-
     private static void AddSection(string title)
     {
         var label = new Label
