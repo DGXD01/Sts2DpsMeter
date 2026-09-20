@@ -89,6 +89,14 @@ public sealed record DamageAttribution(
 
 public static class DpsAttribution
 {
+    private enum DirectSourceProvenance
+    {
+        None,
+        GameModelStack,
+        RecentWindowFallback,
+        DealerFallback
+    }
+
     private const string UnknownSource = "未知来源";
     private static readonly object PowerOriginSyncRoot = new();
     private static readonly ConditionalWeakTable<PowerModel, PowerOriginRecord> PowerOrigins = new();
@@ -179,13 +187,18 @@ public static class DpsAttribution
     {
         var chain = DpsSourceContext.GetModelChain(choiceContext);
         var directModel = cardSource ?? SelectDirectModel(chain, target);
-        var directFromGameStack = directModel is not null;
+        var sourceProvenance = directModel is null
+            ? DirectSourceProvenance.None
+            : DirectSourceProvenance.GameModelStack;
 
         // 回合结束球体被动不经 OrbCmd，使用 Trigger 后保存的独立近时来源。
         if (directModel is null && props.HasFlag(ValueProp.Unpowered))
         {
             directModel = DpsSourceContext.GetRecentOrb();
-            directFromGameStack = directModel is not null;
+            if (directModel is not null)
+            {
+                sourceProvenance = DirectSourceProvenance.RecentWindowFallback;
+            }
         }
 
         if (directModel is null)
@@ -195,22 +208,35 @@ public static class DpsAttribution
                 && IsPlausibleIncomingDamagePower(recentPower, target))
             {
                 directModel = recentPower;
+                sourceProvenance = DirectSourceProvenance.RecentWindowFallback;
             }
         }
 
         if (directModel is null)
         {
             directModel = DpsSourceContext.GetRecentModel<RelicModel>();
+            if (directModel is not null)
+            {
+                sourceProvenance = DirectSourceProvenance.RecentWindowFallback;
+            }
         }
 
         if (directModel is null)
         {
             directModel = DpsSourceContext.GetRecentModel<PotionModel>();
+            if (directModel is not null)
+            {
+                sourceProvenance = DirectSourceProvenance.RecentWindowFallback;
+            }
         }
 
         if (directModel is null)
         {
             directModel = FindFallbackPower(dealer, target, result);
+            if (directModel is not null)
+            {
+                sourceProvenance = DirectSourceProvenance.DealerFallback;
+            }
         }
 
         var card = cardSource ?? FindFirst<CardModel>(chain);
@@ -241,9 +267,7 @@ public static class DpsAttribution
 
         if (directModel is null)
         {
-            var creatureConfidence = directFromGameStack
-                ? AttributionConfidence.Exact
-                : AttributionConfidence.Inferred;
+            var creatureConfidence = ResolveConfidence(sourceProvenance);
             var trackingStatus = ResolveTrackingStatus(null, triggerCard, creatureConfidence);
 
             if (dealer is not null)
@@ -293,9 +317,7 @@ public static class DpsAttribution
         var displayTitle = GetModelTitle(directModel);
         var internalId = GetModelInternalId(directModel);
         var semanticTag = ResolveSemanticTag(directModel, chain, result, props);
-        var confidence = directFromGameStack
-            ? AttributionConfidence.Exact
-            : AttributionConfidence.Inferred;
+        var confidence = ResolveConfidence(sourceProvenance);
 
         if (directModel is OrbModel && string.IsNullOrWhiteSpace(semanticTag))
         {
@@ -323,6 +345,13 @@ public static class DpsAttribution
             poisonSource,
             accountablePlayer);
     }
+    private static AttributionConfidence ResolveConfidence(DirectSourceProvenance provenance)
+    {
+        return provenance == DirectSourceProvenance.GameModelStack
+            ? AttributionConfidence.Exact
+            : AttributionConfidence.Inferred;
+    }
+
     public static DamageAttribution? ResolveDoomKill(DoomPower power, Creature target)
     {
         if (!target.IsEnemy)
