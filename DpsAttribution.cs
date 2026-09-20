@@ -170,14 +170,8 @@ public static class DpsAttribution
         CardModel? cardSource)
     {
         var chain = DpsSourceContext.GetModelChain(choiceContext);
-        var directModel = SelectDirectModel(chain);
+        var directModel = cardSource ?? SelectDirectModel(chain);
         var directFromGameStack = directModel is not null;
-
-        if (directModel is null && cardSource is not null)
-        {
-            directModel = cardSource;
-            directFromGameStack = true;
-        }
 
         // 回合结束球体被动不经 OrbCmd，使用 Trigger 后保存的独立近时来源。
         if (directModel is null && props.HasFlag(ValueProp.Unpowered))
@@ -188,7 +182,11 @@ public static class DpsAttribution
 
         if (directModel is null)
         {
-            directModel = DpsSourceContext.GetRecentModel<PowerModel>();
+            var recentPower = DpsSourceContext.GetRecentModel<PowerModel>();
+            if (recentPower is not null && IsDamagePower(recentPower))
+            {
+                directModel = recentPower;
+            }
         }
 
         if (directModel is null)
@@ -353,13 +351,23 @@ public static class DpsAttribution
                 continue;
             }
 
-            if (model is CardModel or PowerModel or RelicModel or PotionModel or OrbModel or EventModel)
+            if (model is CardModel or RelicModel or PotionModel or OrbModel or EventModel)
             {
                 return model;
+            }
+
+            if (model is PowerModel power && IsDamagePower(power))
+            {
+                return power;
             }
         }
 
         return null;
+    }
+
+    private static bool IsDamagePower(PowerModel power)
+    {
+        return DamagePowerNames.Contains(power.GetType().Name);
     }
 
     private static T? FindFirst<T>(IReadOnlyList<AbstractModel> chain) where T : AbstractModel
