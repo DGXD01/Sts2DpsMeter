@@ -14,12 +14,16 @@ public static class DpsMeterSettingsUi
 
     private static PanelContainer? _panel;
     private static VBoxContainer? _content;
+    private static Label? _titleLabel;
+    private static Label? _introductionLabel;
     private static bool _visible;
 
     public static bool IsVisible => _visible;
 
     public static void EnsureAttached(CanvasLayer canvas)
     {
+        DpsLocalization.EnsureSubscribed();
+
         if (IsAlive(_panel))
         {
             return;
@@ -59,6 +63,7 @@ public static class DpsMeterSettingsUi
             return;
         }
 
+        UpdateLocalizedHeader();
         RebuildContent();
         _panel!.Visible = _visible;
     }
@@ -99,24 +104,24 @@ public static class DpsMeterSettingsUi
         root.AddThemeConstantOverride("separation", 8);
         _panel.AddChild(root);
 
-        var title = new Label
+        _titleLabel = new Label
         {
-            Text = "Sts2 DPS Meter 设置",
+            Text = DpsLocalization.Get("Sts2 DPS Meter 设置", "Sts2 DPS Meter Settings"),
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        title.AddThemeColorOverride("font_color", HeadingColor);
-        title.AddThemeFontSizeOverride("font_size", 16);
-        root.AddChild(title);
+        _titleLabel.AddThemeColorOverride("font_color", HeadingColor);
+        _titleLabel.AddThemeFontSizeOverride("font_size", 16);
+        root.AddChild(_titleLabel);
 
-        var introduction = new Label
+        _introductionLabel = new Label
         {
-            Text = "伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。",
+            Text = DpsLocalization.Get("伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。", "Refreshes immediately after damage. Use the HUD button to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings."),
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
-        introduction.AddThemeColorOverride("font_color", MutedColor);
-        introduction.AddThemeFontSizeOverride("font_size", 12);
-        root.AddChild(introduction);
+        _introductionLabel.AddThemeColorOverride("font_color", MutedColor);
+        _introductionLabel.AddThemeFontSizeOverride("font_size", 12);
+        root.AddChild(_introductionLabel);
 
         var scroll = new ScrollContainer
         {
@@ -133,86 +138,101 @@ public static class DpsMeterSettingsUi
         scroll.AddChild(_content);
     }
 
+    private static void UpdateLocalizedHeader()
+    {
+        if (IsAlive(_titleLabel))
+        {
+            _titleLabel!.Text = DpsLocalization.Get("Sts2 DPS Meter 设置", "Sts2 DPS Meter Settings");
+        }
+
+        if (IsAlive(_introductionLabel))
+        {
+            _introductionLabel!.Text = DpsLocalization.Get(
+                "伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。",
+                "Refreshes immediately after damage. Use the HUD button to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings.");
+        }
+    }
+
     private static void RebuildContent()
     {
         ClearChildren(_content!);
         var settings = DpsMeterSettings.Current;
 
-        AddSection("显示与行为");
-        AddToggle("启动时显示 HUD", settings.StartVisible, value =>
+        AddSection(DpsLocalization.Get("显示与行为", "Display & Behavior"));
+        AddToggle(DpsLocalization.Get("启动时显示 HUD", "Start with HUD visible"), settings.StartVisible, value =>
         {
             settings.StartVisible = value;
             SaveAndRefresh();
         });
-        AddToggle("锁定 HUD 位置", settings.LockPosition, value =>
+        AddToggle(DpsLocalization.Get("锁定 HUD 位置", "Lock HUD position"), settings.LockPosition, value =>
         {
             settings.LockPosition = value;
             SaveAndRefresh();
         });
-        AddToggle("紧凑模式", settings.CompactMode, value =>
+        AddToggle(DpsLocalization.Get("紧凑模式", "Compact mode"), settings.CompactMode, value =>
         {
             settings.CompactMode = value;
             SaveAndRefresh();
         });
 
-        AddSection("统计模块");
-        AddToggle("玩家造成伤害", settings.ShowDealtBreakdown, value =>
+        AddSection(DpsLocalization.Get("统计模块", "Statistics Modules"));
+        AddToggle(DpsLocalization.Get("玩家造成伤害", "Damage Dealt"), settings.ShowDealtBreakdown, value =>
         {
             settings.ShowDealtBreakdown = value;
             SaveAndRefresh();
         });
-        AddToggle("玩家受到伤害", settings.ShowTakenBreakdown, value =>
+        AddToggle(DpsLocalization.Get("玩家受到伤害", "Damage Taken"), settings.ShowTakenBreakdown, value =>
         {
             settings.ShowTakenBreakdown = value;
             SaveAndRefresh();
         });
-        AddToggle("格挡防御", settings.ShowBlockGained, value =>
+        AddToggle(DpsLocalization.Get("格挡防御", "Block Gained"), settings.ShowBlockGained, value =>
         {
             settings.ShowBlockGained = value;
             SaveAndRefresh();
         });
-        AddToggle("能量使用", settings.ShowEnergySpent, value =>
+        AddToggle(DpsLocalization.Get("能量使用", "Energy Spent"), settings.ShowEnergySpent, value =>
         {
             settings.ShowEnergySpent = value;
             SaveAndRefresh();
         });
-        AddToggle("给队友能量", settings.ShowEnergyGivenToAllies, value =>
+        AddToggle(DpsLocalization.Get("给队友能量", "Ally Energy Given"), settings.ShowEnergyGivenToAllies, value =>
         {
             settings.ShowEnergyGivenToAllies = value;
             SaveAndRefresh();
         });
-        AddToggle("给队友护盾", settings.ShowBlockGivenToAllies, value =>
+        AddToggle(DpsLocalization.Get("给队友护盾", "Ally Block Given"), settings.ShowBlockGivenToAllies, value =>
         {
             settings.ShowBlockGivenToAllies = value;
             SaveAndRefresh();
         });
-        AddToggle("给队友回血", settings.ShowHealingGivenToAllies, value =>
+        AddToggle(DpsLocalization.Get("给队友回血", "Ally Healing Given"), settings.ShowHealingGivenToAllies, value =>
         {
             settings.ShowHealingGivenToAllies = value;
             SaveAndRefresh();
         });
-        AddToggle("给队友抽牌", settings.ShowCardsDrawnForAllies, value =>
+        AddToggle(DpsLocalization.Get("给队友抽牌", "Cards Drawn for Allies"), settings.ShowCardsDrawnForAllies, value =>
         {
             settings.ShowCardsDrawnForAllies = value;
             SaveAndRefresh();
         });
-        AddText("队友增益仅在多人模式显示；单人模式下这些开关不会新增 HUD 模块。", MutedColor, 11);
-        AddText("可在下方勾选需要显示的模块；统计范围仅切换数据的时间维度，不改变模块开关。", MutedColor, 11);
+        AddText(DpsLocalization.Get("队友增益仅在多人模式显示；单人模式下这些开关不会新增 HUD 模块。", "Ally support is shown only in multiplayer; these toggles do not add HUD modules in single-player."), MutedColor, 11);
+        AddText(DpsLocalization.Get("可在下方勾选需要显示的模块；统计范围仅切换数据的时间维度，不改变模块开关。", "Select the modules to display below; scope changes only the time range, not the module toggles."), MutedColor, 11);
 
-        AddSection("布局与密度");
-        AddSliderRow("伤害来源显示行数", settings.MaxRows, 1, 12, 1, value =>
+        AddSection(DpsLocalization.Get("布局与密度", "Layout & Density"));
+        AddSliderRow(DpsLocalization.Get("伤害来源显示行数", "Damage source rows"), settings.MaxRows, 1, 12, 1, value =>
         {
             settings.MaxRows = Math.Clamp((int)value, 1, 12);
             SaveAndRefresh();
         });
 
-        AddSliderRow("面板透明度", settings.PanelOpacity, 0.35, 1.0, 0.01, value =>
+        AddSliderRow(DpsLocalization.Get("面板透明度", "Panel opacity"), settings.PanelOpacity, 0.35, 1.0, 0.01, value =>
         {
             settings.PanelOpacity = Mathf.Clamp((float)value, 0.35f, 1f);
             SaveAndRefresh();
         });
         AddSliderRow(
-            "界面缩放",
+            DpsLocalization.Get("界面缩放", "UI scale"),
             settings.UiScale,
             DpsMeterSettings.MinUiScale,
             DpsMeterSettings.MaxUiScale,
@@ -222,12 +242,12 @@ public static class DpsMeterSettingsUi
             settings.UiScale = DpsMeterSettings.ClampUiScale((float)value);
             SaveAndRefresh();
         });
-        AddText("界面缩放仅通过上方滑块调整，不注册键盘或鼠标滚轮热键。", MutedColor, 11);
+        AddText(DpsLocalization.Get("界面缩放仅通过上方滑块调整，不注册键盘或鼠标滚轮热键。", "UI scale is adjusted only by the slider above; no keyboard or mouse-wheel hotkeys are registered."), MutedColor, 11);
 
         var resetScale = new Button
         {
             FocusMode = Control.FocusModeEnum.None,
-            Text = "重置 HUD 大小（100%）"
+            Text = DpsLocalization.Get("重置 HUD 大小（100%）", "Reset HUD Size (100%)")
         };
         resetScale.Pressed += () =>
         {
@@ -236,12 +256,12 @@ public static class DpsMeterSettingsUi
         };
         _content!.AddChild(resetScale);
 
-        AddSection("位置");
+        AddSection(DpsLocalization.Get("位置", "Position"));
         var resetPosition = new Button
         {
             FocusMode = Control.FocusModeEnum.None,
-            Text = "重置 HUD 位置到左上角",
-            TooltipText = "默认位置为 (18, 18)；HUD 未锁定时可直接拖动。"
+            Text = DpsLocalization.Get("重置 HUD 位置到左上角", "Reset HUD Position to Top-Left"),
+            TooltipText = DpsLocalization.Get("默认位置为 (18, 18)；HUD 未锁定时可直接拖动。", "Default position is (18, 18); drag the HUD directly when it is unlocked.")
         };
         resetPosition.Pressed += () =>
         {
@@ -251,11 +271,11 @@ public static class DpsMeterSettingsUi
         };
         _content!.AddChild(resetPosition);
 
-        AddSection("操作");
+        AddSection(DpsLocalization.Get("操作", "Actions"));
         var resetAll = new Button
         {
             FocusMode = Control.FocusModeEnum.None,
-            Text = "恢复全部推荐值"
+            Text = DpsLocalization.Get("恢复全部推荐值", "Restore Recommended Values")
         };
         resetAll.Pressed += () =>
         {
@@ -268,12 +288,12 @@ public static class DpsMeterSettingsUi
         var close = new Button
         {
             FocusMode = Control.FocusModeEnum.None,
-            Text = "关闭设置面板"
+            Text = DpsLocalization.Get("关闭设置面板", "Close Settings")
         };
         close.Pressed += () => ToggleVisibility();
         _content!.AddChild(close);
 
-        AddText("配置文件", MutedColor, 12);
+        AddText(DpsLocalization.Get("配置文件", "Config File"), MutedColor, 12);
         AddText(DpsMeterSettings.FilePath, MutedColor, 11);
     }
 

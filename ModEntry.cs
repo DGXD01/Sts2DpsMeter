@@ -28,6 +28,8 @@ public static class ModEntry
             ModId,
             _ => new[] { DpsHook.GetCanonical() });
 
+        DpsLocalization.EnsureSubscribed();
+
         RunManager.Instance.RunStarted += OnRunStarted;
         CombatManager.Instance.CombatSetUp += OnCombatSetUp;
         CombatManager.Instance.CombatEnded += OnCombatEnded;
