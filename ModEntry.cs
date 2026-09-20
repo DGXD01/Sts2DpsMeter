@@ -20,9 +20,13 @@ public static class ModEntry
             return;
         }
 
-        _initialized = true;
+        if (!DpsSourceContext.Initialize())
+        {
+            GD.PushError($"[{ModId}] 初始化中止：伤害来源上下文不可用。");
+            return;
+        }
 
-        DpsSourceContext.Initialize();
+        _initialized = true;
 
         ModHelper.SubscribeForCombatStateHooks(
             ModId,

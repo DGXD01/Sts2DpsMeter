@@ -25,15 +25,19 @@ public static class DpsSourceContext
     private static OrbModel? _recentOrb;
     private static long _recentOrbTimestamp;
     private static bool _initialized;
+    private static bool _initializationFailed;
 
-    public static void Initialize()
+    public static bool Initialize()
     {
         if (_initialized)
         {
-            return;
+            return true;
         }
 
-        _initialized = true;
+        if (_initializationFailed)
+        {
+            return false;
+        }
 
         try
         {
@@ -101,11 +105,15 @@ public static class DpsSourceContext
                 doomKillPrefix,
                 "DoomPower.DoomKill");
 
+            _initialized = true;
             GD.Print($"[{ModEntry.ModId}] 已安装伤害来源上下文补丁");
+            return true;
         }
         catch (Exception exception)
         {
-            GD.PushError($"[{ModEntry.ModId}] 安装伤害来源上下文补丁失败：{exception}");
+            _initializationFailed = true;
+            GD.PushError($"[{ModEntry.ModId}] 安装伤害来源上下文补丁失败，已停止 Mod 初始化：{exception}");
+            return false;
         }
     }
 
