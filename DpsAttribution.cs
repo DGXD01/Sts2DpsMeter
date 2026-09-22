@@ -93,6 +93,7 @@ public static class DpsAttribution
     {
         None,
         GameModelStack,
+        ExplicitEffectStack,
         RecentWindowFallback,
         DealerFallback
     }
@@ -186,10 +187,30 @@ public static class DpsAttribution
         CardModel? cardSource)
     {
         var chain = DpsSourceContext.GetModelChain(choiceContext);
-        var directModel = cardSource ?? SelectDirectModel(chain, target);
-        var sourceProvenance = directModel is null
+        AbstractModel? directModel = cardSource;
+        var sourceProvenance = cardSource is null
             ? DirectSourceProvenance.None
             : DirectSourceProvenance.GameModelStack;
+
+        // 遗物和无 PushModel 的异步效果没有真实模型栈，使用补丁作用域内的显式来源。
+        if (directModel is null)
+        {
+            directModel = DpsSourceContext.GetCurrentEffect(dealer)
+                ?? DpsSourceContext.GetCurrentEffect(target);
+            if (directModel is not null)
+            {
+                sourceProvenance = DirectSourceProvenance.ExplicitEffectStack;
+            }
+        }
+
+        if (directModel is null)
+        {
+            directModel = SelectDirectModel(chain, target);
+            if (directModel is not null)
+            {
+                sourceProvenance = DirectSourceProvenance.GameModelStack;
+            }
+        }
 
         // 回合结束球体被动不经 OrbCmd，使用 Trigger 后保存的独立近时来源。
         if (directModel is null && props.HasFlag(ValueProp.Unpowered))
@@ -246,7 +267,7 @@ public static class DpsAttribution
         var selfLoss = IsSelfDamage(dealer, target, directModel, card);
         var category = ResolveCategory(target, directModel, dealer, accountablePlayer, selfLoss);
         var mechanism = ResolveDamageMechanism(directModel, props, selfLoss);
-        var poisonSource = ResolvePoisonSource(mechanism);
+        var poisonSource = ResolvePoisonSource(mechanism, directModel);
 
         if (category == DamageCategory.Ignored)
         {
@@ -658,7 +679,9 @@ public static class DpsAttribution
 
         if (TryGetTrackedPowerOrigin(power, out var trackedOrigin))
         {
-            return new TriggerCardInfo(trackedOrigin.DisplayName, trackedOrigin.InternalId);
+            return trackedOrigin.SourceType == DamageSourceType.Card
+                ? new TriggerCardInfo(trackedOrigin.DisplayName, trackedOrigin.InternalId)
+                : null;
         }
 
         if (!PowerOriginCardTypes.TryGetValue(power.GetType(), out var cardType))
@@ -680,21 +703,32 @@ public static class DpsAttribution
         }
     }
 
-    public static void RecordPowerOrigin(PowerModel power, CardModel? cardSource)
+    public static void RecordPowerOrigin(PowerModel power, decimal amount, AbstractModel? sourceModel)
     {
-        var powerName = power.GetType().Name;
-        var isDoomPower = power is DoomPower;
-        var tracksPowerOrigin = isDoomPower
-            || DamagePowerNames.Contains(powerName)
-            && (cardSource is not null || AmbiguousPowerNames.Contains(powerName));
-        if (powerName == "PoisonPower" || !tracksPowerOrigin)
+        if (amount <= 0)
         {
             return;
         }
 
-        var snapshot = cardSource is null
+        var powerName = power.GetType().Name;
+        var isDoomPower = power is DoomPower;
+        var isPoisonPower = powerName == "PoisonPower";
+        var tracksPowerOrigin = isDoomPower
+            || isPoisonPower
+            || DamagePowerNames.Contains(powerName)
+            && (sourceModel is not null || AmbiguousPowerNames.Contains(powerName));
+        if (!tracksPowerOrigin)
+        {
+            return;
+        }
+
+        var snapshot = sourceModel is null
             ? null
-            : new PowerOriginSnapshot(GetModelTitle(cardSource), GetModelInternalId(cardSource));
+            : new PowerOriginSnapshot(
+                GetModelTitle(sourceModel),
+                GetModelInternalId(sourceModel),
+                GetSourceType(sourceModel),
+                ToAppliedStacks(amount));
         lock (PowerOriginSyncRoot)
         {
             var record = PowerOrigins.GetValue(power, _ => new PowerOriginRecord());
@@ -709,14 +743,13 @@ public static class DpsAttribution
         }
     }
 
+    private static int ToAppliedStacks(decimal amount)
+    {
+        return amount >= int.MaxValue ? int.MaxValue : decimal.ToInt32(amount);
+    }
+
     private static bool TryGetTrackedPowerOrigin(PowerModel power, out PowerOriginSnapshot snapshot)
     {
-        if (power.GetType().Name == "PoisonPower")
-        {
-            snapshot = null!;
-            return false;
-        }
-
         lock (PowerOriginSyncRoot)
         {
             if (!PowerOrigins.TryGetValue(power, out var record))
@@ -779,9 +812,12 @@ public static class DpsAttribution
         TriggerCardInfo? triggerCard,
         AttributionConfidence confidence)
     {
-        if (directModel?.GetType().Name == "PoisonPower")
+        if (directModel is PowerModel poisonPower
+            && poisonPower.GetType().Name == "PoisonPower")
         {
-            return SourceTrackingStatus.Deferred;
+            return TryGetTrackedPowerOrigin(poisonPower, out _)
+                ? SourceTrackingStatus.Tracked
+                : SourceTrackingStatus.Deferred;
         }
 
         if (confidence == AttributionConfidence.Unknown || directModel is null && triggerCard is null)
@@ -792,15 +828,34 @@ public static class DpsAttribution
         return SourceTrackingStatus.Tracked;
     }
 
-    private static PoisonSourceInfo? ResolvePoisonSource(DamageMechanismKind mechanism)
+    private static PoisonSourceInfo? ResolvePoisonSource(
+        DamageMechanismKind mechanism,
+        AbstractModel? directModel)
     {
-        return mechanism == DamageMechanismKind.Poison
-            ? PoisonSourceInfo.Deferred
-            : null;
+        if (mechanism != DamageMechanismKind.Poison)
+        {
+            return null;
+        }
+
+        if (directModel is PowerModel power
+            && TryGetTrackedPowerOrigin(power, out var origin))
+        {
+            return new PoisonSourceInfo(
+                origin.InternalId,
+                origin.DisplayName,
+                origin.AppliedStacks,
+                SourceTrackingStatus.Tracked);
+        }
+
+        return PoisonSourceInfo.Deferred;
     }
 
     private sealed record TriggerCardInfo(string DisplayName, string InternalId);
-    private sealed record PowerOriginSnapshot(string DisplayName, string InternalId);
+    private sealed record PowerOriginSnapshot(
+        string DisplayName,
+        string InternalId,
+        DamageSourceType SourceType,
+        int AppliedStacks);
 
     private sealed class PowerOriginRecord
     {
@@ -823,10 +878,24 @@ public static class DpsAttribution
                 return;
             }
 
-            if (!string.Equals(Snapshot.InternalId, snapshot.InternalId, StringComparison.Ordinal))
+            if (Snapshot.SourceType != snapshot.SourceType
+                || !string.Equals(Snapshot.InternalId, snapshot.InternalId, StringComparison.Ordinal))
             {
                 HasMixedSources = true;
+                return;
             }
+
+            Snapshot = Snapshot with
+            {
+                AppliedStacks = AddAppliedStacks(Snapshot.AppliedStacks, snapshot.AppliedStacks)
+            };
+        }
+
+        private static int AddAppliedStacks(int current, int additional)
+        {
+            return current > int.MaxValue - additional
+                ? int.MaxValue
+                : current + additional;
         }
 
         public bool TryGetUnambiguousSnapshot(out PowerOriginSnapshot snapshot)

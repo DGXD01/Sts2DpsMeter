@@ -43,6 +43,7 @@ public static class ModEntry
 
     private static void OnRunStarted(RunState state)
     {
+        DpsSourceContext.ClearEffectSources();
         DpsStats.ResetRun();
         DpsMeterUi.Refresh();
         GD.Print($"[{ModId}] 新对局开始");
@@ -50,6 +51,7 @@ public static class ModEntry
 
     private static void OnCombatSetUp(CombatState state)
     {
+        DpsSourceContext.ClearEffectSources();
         DpsStats.BeginCombat(state.Players);
         DpsMeterUi.EnsureAttached();
 
@@ -78,6 +80,7 @@ public static class ModEntry
         CombatManager.Instance.TurnStarted -= OnTurnStarted;
         CombatManager.Instance.TurnEnded -= OnTurnEnded;
 
+        DpsSourceContext.ClearEffectSources();
         DpsStats.EndCombat();
         DpsMeterUi.Refresh();
         DpsStats.PrintSummary();

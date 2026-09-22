@@ -101,11 +101,6 @@ public static class DpsStats
             return;
         }
 
-        if (!IsCombatClockRunning())
-        {
-            return;
-        }
-
         lock (SyncRoot)
         {
             if (_active)
@@ -641,7 +636,11 @@ public static class DpsStats
 
     private static string FormatSource(SourceStatsSnapshot source)
     {
-        var parts = new List<string> { source.Source };
+        var parts = new List<string>
+        {
+            source.Source,
+            $"归因置信度={source.Confidence}"
+        };
         if (!string.IsNullOrWhiteSpace(source.SemanticTag))
         {
             parts.Add(source.SemanticTag);
@@ -655,18 +654,6 @@ public static class DpsStats
         return string.Join(" / ", parts);
     }
 
-    private static bool IsCombatClockRunning()
-    {
-        try
-        {
-            var manager = CombatManager.Instance;
-            return manager is not null && manager.IsInProgress && !manager.IsPaused;
-        }
-        catch
-        {
-            return false;
-        }
-    }
 
     private static PlayerAccumulator CreatePlayerAccumulator(Player player)
     {

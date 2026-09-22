@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using Godot;
 using HarmonyLib;
 using MegaCrit.Sts2.Core.Entities.Creatures;
@@ -11,6 +12,7 @@ using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.GameActions.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Models.Powers;
+using MegaCrit.Sts2.Core.Models.Relics;
 
 namespace Sts2DpsMeter;
 
@@ -19,6 +21,7 @@ public static class DpsSourceContext
     private const string HarmonyId = "DGXD01.Sts2DpsMeter";
     private static readonly object SyncRoot = new();
     private static readonly ConditionalWeakTable<PlayerChoiceContext, Stack<AbstractModel>> ModelStacks = new();
+    private static readonly Dictionary<ulong, Stack<AbstractModel>> EffectSources = new();
     private static readonly Stopwatch RecentTimer = Stopwatch.StartNew();
     private static AbstractModel? _recentModel;
     private static long _recentModelTimestamp;
@@ -39,9 +42,11 @@ public static class DpsSourceContext
             return false;
         }
 
+        Harmony? harmony = null;
+
         try
         {
-            var harmony = new Harmony(HarmonyId);
+            harmony = new Harmony(HarmonyId);
             var pushModel = AccessTools.Method(
                 typeof(PlayerChoiceContext),
                 nameof(PlayerChoiceContext.PushModel));
@@ -53,6 +58,13 @@ public static class DpsSourceContext
             var powerFlashPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(PowerFlashPostfix));
             var relicFlashPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(RelicFlashPostfix));
             var orbTriggerPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(OrbTriggerPostfix));
+            var potionUsePrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(PotionUsePrefix));
+            var parryingShieldPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(ParryingShieldSourcePrefix));
+            var screamingFlagonPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(ScreamingFlagonSourcePrefix));
+            var stoneCalendarPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(StoneCalendarSourcePrefix));
+            var bronzeScalesPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(BronzeScalesSourcePrefix));
+            var twistedFunnelPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(TwistedFunnelSourcePrefix));
+            var effectSourcePostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(EffectSourcePostfix));
             var doomKillPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(DoomKillPrefix));
             var energyGainPostfix = AccessTools.Method(typeof(DpsSourceContext), nameof(EnergyGainPostfix));
             var healPrefix = AccessTools.Method(typeof(DpsSourceContext), nameof(HealPrefix));
@@ -84,6 +96,42 @@ public static class DpsSourceContext
                 "OrbModel.Trigger");
             PatchOptional(
                 harmony,
+                AccessTools.Method(typeof(PotionModel), nameof(PotionModel.OnUseWrapper)),
+                potionUsePrefix,
+                effectSourcePostfix,
+                "PotionModel.OnUseWrapper");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(typeof(ParryingShield), nameof(ParryingShield.AfterSideTurnEnd)),
+                parryingShieldPrefix,
+                effectSourcePostfix,
+                "ParryingShield.AfterSideTurnEnd");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(typeof(ScreamingFlagon), nameof(ScreamingFlagon.BeforeSideTurnEnd)),
+                screamingFlagonPrefix,
+                effectSourcePostfix,
+                "ScreamingFlagon.BeforeSideTurnEnd");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(typeof(StoneCalendar), nameof(StoneCalendar.BeforeSideTurnEnd)),
+                stoneCalendarPrefix,
+                effectSourcePostfix,
+                "StoneCalendar.BeforeSideTurnEnd");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(typeof(BronzeScales), nameof(BronzeScales.AfterRoomEntered)),
+                bronzeScalesPrefix,
+                effectSourcePostfix,
+                "BronzeScales.AfterRoomEntered");
+            PatchOptional(
+                harmony,
+                AccessTools.Method(typeof(TwistedFunnel), nameof(TwistedFunnel.BeforeSideTurnStart)),
+                twistedFunnelPrefix,
+                effectSourcePostfix,
+                "TwistedFunnel.BeforeSideTurnStart");
+            PatchOptional(
+                harmony,
                 AccessTools.Method(
                     typeof(PlayerCombatState),
                     nameof(PlayerCombatState.GainEnergy),
@@ -112,6 +160,15 @@ public static class DpsSourceContext
         catch (Exception exception)
         {
             _initializationFailed = true;
+            try
+            {
+                harmony?.UnpatchAll(HarmonyId);
+            }
+            catch (Exception cleanupException)
+            {
+                GD.PushError($"[{ModEntry.ModId}] 清理部分已安装的伤害来源上下文补丁失败：{cleanupException}");
+            }
+
             GD.PushError($"[{ModEntry.ModId}] 安装伤害来源上下文补丁失败，已停止 Mod 初始化：{exception}");
             return false;
         }
@@ -189,6 +246,30 @@ public static class DpsSourceContext
         return null;
     }
 
+    public static AbstractModel? GetCurrentEffect(ulong playerNetId)
+    {
+        lock (SyncRoot)
+        {
+            return EffectSources.TryGetValue(playerNetId, out var stack) && stack.Count > 0
+                ? stack.Peek()
+                : null;
+        }
+    }
+
+    public static AbstractModel? GetCurrentEffect(Creature? source)
+    {
+        var player = GetPlayerForCreature(source);
+        return player is null ? null : GetCurrentEffect(player.NetId);
+    }
+
+    public static void ClearEffectSources()
+    {
+        lock (SyncRoot)
+        {
+            EffectSources.Clear();
+        }
+    }
+
     public static void RecordRecentModel(AbstractModel model)
     {
         lock (SyncRoot)
@@ -258,6 +339,49 @@ public static class DpsSourceContext
     private static void OrbTriggerPostfix(OrbModel __instance)
     {
         RecordRecentOrb(__instance);
+    }
+
+    private static void PotionUsePrefix(PotionModel __instance, out ulong? __state)
+    {
+        __state = PushEffect(__instance, __instance.Owner);
+    }
+
+    private static void ParryingShieldSourcePrefix(ParryingShield __instance, out ulong? __state)
+    {
+        __state = PushEffect(__instance, __instance.Owner);
+    }
+
+    private static void ScreamingFlagonSourcePrefix(ScreamingFlagon __instance, out ulong? __state)
+    {
+        __state = PushEffect(__instance, __instance.Owner);
+    }
+
+    private static void StoneCalendarSourcePrefix(StoneCalendar __instance, out ulong? __state)
+    {
+        __state = PushEffect(__instance, __instance.Owner);
+    }
+
+    private static void BronzeScalesSourcePrefix(BronzeScales __instance, out ulong? __state)
+    {
+        __state = PushEffect(__instance, __instance.Owner);
+    }
+
+    private static void TwistedFunnelSourcePrefix(TwistedFunnel __instance, out ulong? __state)
+    {
+        __state = PushEffect(__instance, __instance.Owner);
+    }
+
+    private static void EffectSourcePostfix(ulong? __state, ref Task __result)
+    {
+        if (!__state.HasValue)
+        {
+            return;
+        }
+
+        var playerNetId = __state.Value;
+        __result = __result is null
+            ? PopEffectImmediately(playerNetId)
+            : PopEffectAfter(__result, playerNetId);
     }
 
     private static void EnergyGainPostfix(PlayerCombatState __instance, decimal amount)
@@ -466,6 +590,62 @@ public static class DpsSourceContext
         }
 
         RecordRecentModel(model);
+    }
+
+    private static ulong? PushEffect(AbstractModel model, Player? owner)
+    {
+        if (owner is null)
+        {
+            return null;
+        }
+
+        lock (SyncRoot)
+        {
+            if (!EffectSources.TryGetValue(owner.NetId, out var stack))
+            {
+                stack = new Stack<AbstractModel>();
+                EffectSources[owner.NetId] = stack;
+            }
+
+            stack.Push(model);
+        }
+
+        return owner.NetId;
+    }
+
+    private static Task PopEffectImmediately(ulong playerNetId)
+    {
+        PopEffect(playerNetId);
+        return Task.CompletedTask;
+    }
+
+    private static async Task PopEffectAfter(Task inner, ulong playerNetId)
+    {
+        try
+        {
+            await inner;
+        }
+        finally
+        {
+            PopEffect(playerNetId);
+        }
+    }
+
+    private static void PopEffect(ulong playerNetId)
+    {
+        lock (SyncRoot)
+        {
+            if (!EffectSources.TryGetValue(playerNetId, out var stack) || stack.Count == 0)
+            {
+                return;
+            }
+
+            stack.Pop();
+            if (stack.Count == 0)
+            {
+                EffectSources.Remove(playerNetId);
+            }
+        }
     }
 
     private static void Pop(PlayerChoiceContext context, AbstractModel model)
