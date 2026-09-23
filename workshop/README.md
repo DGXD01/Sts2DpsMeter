@@ -2,6 +2,12 @@
 
 Sts2 DPS Meter 是一款轻量化的《杀戮尖塔 2》战斗统计 Mod。它仅监听战斗事件，不修改卡牌、敌人、奖励或存档，也不会改变游戏平衡。
 
+## 0.2.2 修复
+
+- 修复多人模式下中毒、灾厄击杀等共享伤害被漏记或整段归给单一玩家的问题，现按玩家贡献份额拆分。
+- 修复多人中毒与加速剂层数来源、格挡/有效伤害/溢出伤害拆分，以及异步效果来源串扰。
+- 力量等增伤仍归因到原始攻击来源。
+
 ## 当前功能
 
 - 常驻 HUD 体积小、半透明，可拖拽、缩放和锁定。
@@ -28,6 +34,12 @@ Sts2 DPS Meter 是一款轻量化的《杀戮尖塔 2》战斗统计 Mod。它�
 ## English
 
 Sts2 DPS Meter is a lightweight combat statistics mod for Slay the Spire 2. It listens to combat events only: it does not modify cards, enemies, rewards, or saves, and does not affect game balance.
+
+## Version 0.2.2 Fixes
+
+- Fixed multiplayer shared damage such as Poison and Doom kills being dropped or assigned to a single player; damage is now split by player contribution.
+- Fixed Poison/Accelerant ownership, per-player Block, effective damage, overkill allocation, and asynchronous effect-source interference.
+- Strength and similar damage bonuses remain attributed to the original attack source.
 
 The compact, semi-transparent HUD can be dragged, scaled, and locked. It supports three scopes: Current Combat, Current Turn, and Total. Single-player mode shows damage sources; multiplayer mode automatically switches to a team summary and player rankings, using rich text and class colors to distinguish players.
 
