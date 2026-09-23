@@ -1,0 +1,26 @@
+# .NET / IDE
+bin/
+obj/
+out/
+artifacts/
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+TestResults/
+
+# 编译产物不进入仓库
+*.dll
+*.pdb
+*.pck
+
+# Steam 上传器生成目录
+workshop/content/
+
+# Steam 上传器运行时文件
+mod-uploader.log
+
+# 操作系统文件
+.DS_Store
+Thumbs.db

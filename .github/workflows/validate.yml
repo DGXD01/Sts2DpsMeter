@@ -1,0 +1,24 @@
+name: 仓库校验
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: 静态文件与脚本校验
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 运行仓库校验
+        shell: pwsh
+        run: ./scripts/validate-repo.ps1
