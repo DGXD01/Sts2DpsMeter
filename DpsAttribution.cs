@@ -73,6 +73,8 @@ public sealed record PoisonSourceInfo(
         SourceTrackingStatus.Deferred);
 }
 
+public sealed record PlayerDamageShare(Player Player, decimal Fraction);
+
 public sealed record DamageAttribution(
     string DisplayName,
     string InternalId,
@@ -85,7 +87,8 @@ public sealed record DamageAttribution(
     string? TriggerCardId,
     string? SemanticTag,
     PoisonSourceInfo? PoisonSource,
-    Player? AccountablePlayer);
+    Player? AccountablePlayer,
+    IReadOnlyList<PlayerDamageShare>? PlayerShares = null);
 
 public static class DpsAttribution
 {
@@ -101,6 +104,8 @@ public static class DpsAttribution
     private const string UnknownSource = "未知来源";
     private static readonly object PowerOriginSyncRoot = new();
     private static readonly ConditionalWeakTable<PowerModel, PowerOriginRecord> PowerOrigins = new();
+    private static readonly ConditionalWeakTable<PowerModel, PowerOwnershipRecord> PowerOwnerships = new();
+    private static readonly Dictionary<Creature, PoisonTickState> PoisonTicks = new();
 
     private static readonly HashSet<string> DamagePowerNames = new(StringComparer.Ordinal)
     {
@@ -188,9 +193,20 @@ public static class DpsAttribution
     {
         var chain = DpsSourceContext.GetModelChain(choiceContext);
         AbstractModel? directModel = cardSource;
+        PoisonTickState? poisonTick = null;
         var sourceProvenance = cardSource is null
             ? DirectSourceProvenance.None
             : DirectSourceProvenance.GameModelStack;
+
+        // 中毒 tick 的 dealer/cardSource 都是 null，按目标保存本次回合开始的来源状态。
+        if (cardSource is null
+            && TryGetPoisonTick(target, out var activePoisonTick)
+            && activePoisonTick.Power.Amount > 0)
+        {
+            poisonTick = activePoisonTick;
+            directModel = poisonTick.Power;
+            sourceProvenance = DirectSourceProvenance.ExplicitEffectStack;
+        }
 
         // 遗物和无 PushModel 的异步效果没有真实模型栈，使用补丁作用域内的显式来源。
         if (directModel is null)
@@ -268,6 +284,9 @@ public static class DpsAttribution
         var category = ResolveCategory(target, directModel, dealer, accountablePlayer, selfLoss);
         var mechanism = ResolveDamageMechanism(directModel, props, selfLoss);
         var poisonSource = ResolvePoisonSource(mechanism, directModel);
+        var playerShares = category == DamageCategory.Output
+            ? ResolvePlayerShares(directModel, poisonTick)
+            : null;
 
         if (category == DamageCategory.Ignored)
         {
@@ -316,7 +335,8 @@ public static class DpsAttribution
                     triggerCard?.InternalId,
                     null,
                     poisonSource,
-                    accountablePlayer);
+                    accountablePlayer,
+                    playerShares);
             }
 
             return new DamageAttribution(
@@ -331,7 +351,8 @@ public static class DpsAttribution
                 triggerCard?.InternalId,
                 null,
                 poisonSource,
-                accountablePlayer);
+                accountablePlayer,
+                playerShares);
         }
 
         var sourceType = GetSourceType(directModel);
@@ -364,7 +385,8 @@ public static class DpsAttribution
             triggerCard?.InternalId,
             semanticTag,
             poisonSource,
-            accountablePlayer);
+            accountablePlayer,
+            playerShares);
     }
     private static AttributionConfidence ResolveConfidence(DirectSourceProvenance provenance)
     {
@@ -380,7 +402,9 @@ public static class DpsAttribution
             return null;
         }
 
-        var accountablePlayer = GetPlayerForCreature(power.Applier);
+        var hasShares = TryGetPowerShares(power, out var playerShares);
+        var accountablePlayer = GetPlayerForCreature(power.Applier)
+            ?? (hasShares ? playerShares[0].Player : null);
         if (accountablePlayer is null)
         {
             return null;
@@ -399,7 +423,8 @@ public static class DpsAttribution
             triggerCard?.InternalId,
             "灾厄击杀",
             null,
-            accountablePlayer);
+            accountablePlayer,
+            hasShares ? playerShares : null);
     }
     private static AbstractModel? SelectDirectModel(IReadOnlyList<AbstractModel> chain, Creature target)
     {
@@ -703,12 +728,18 @@ public static class DpsAttribution
         }
     }
 
-    public static void RecordPowerOrigin(PowerModel power, decimal amount, AbstractModel? sourceModel)
+    public static void RecordPowerOrigin(
+        PowerModel power,
+        decimal amount,
+        Creature? applier,
+        AbstractModel? sourceModel)
     {
         if (amount <= 0)
         {
             return;
         }
+
+        RecordPowerOwnership(power, amount, applier);
 
         var powerName = power.GetType().Name;
         var isDoomPower = power is DoomPower;
@@ -741,6 +772,199 @@ public static class DpsAttribution
                 record.Record(snapshot);
             }
         }
+    }
+
+    public static bool BeginPoisonTick(PoisonPower power, IReadOnlyList<Creature> participants)
+    {
+        if (!participants.Contains(power.Owner))
+        {
+            return false;
+        }
+
+        var accelerantAmount = power.Owner.CombatState
+            .GetOpponentsOf(power.Owner)
+            .Where(creature => creature.IsAlive)
+            .Sum(creature => creature.GetPowerAmount<AccelerantPower>());
+        var triggerCount = Math.Min(power.Amount, 1 + accelerantAmount);
+        if (triggerCount <= 0)
+        {
+            return false;
+        }
+
+        var poisonShares = GetPowerSharesWithFallback(power);
+        var accelerantShares = BuildAccelerantShares(power);
+        lock (PowerOriginSyncRoot)
+        {
+            PoisonTicks[power.Owner] = new PoisonTickState(
+                power,
+                poisonShares,
+                accelerantShares,
+                triggerCount);
+        }
+
+        return true;
+    }
+
+    public static void EndPoisonTick(Creature owner)
+    {
+        lock (PowerOriginSyncRoot)
+        {
+            PoisonTicks.Remove(owner);
+        }
+    }
+
+    public static void ResetSourceTracking()
+    {
+        lock (PowerOriginSyncRoot)
+        {
+            PoisonTicks.Clear();
+        }
+    }
+
+    private static bool TryGetPoisonTick(Creature target, out PoisonTickState state)
+    {
+        lock (PowerOriginSyncRoot)
+        {
+            return PoisonTicks.TryGetValue(target, out state!);
+        }
+    }
+
+    private static IReadOnlyList<PlayerDamageShare>? ResolvePlayerShares(
+        AbstractModel? directModel,
+        PoisonTickState? poisonTick)
+    {
+        if (poisonTick is not null)
+        {
+            lock (PowerOriginSyncRoot)
+            {
+                poisonTick.Consume(out var tickShares);
+                return tickShares.Count == 0 ? null : tickShares;
+            }
+        }
+
+        return directModel is PowerModel power && TryGetPowerShares(power, out var shares)
+            ? shares
+            : null;
+    }
+
+    private static void RecordPowerOwnership(
+        PowerModel power,
+        decimal amount,
+        Creature? applier)
+    {
+        var player = ResolvePowerPlayer(power, applier);
+        if (player is null || amount <= 0)
+        {
+            return;
+        }
+
+        lock (PowerOriginSyncRoot)
+        {
+            PowerOwnerships
+                .GetValue(power, _ => new PowerOwnershipRecord())
+                .Record(player, amount);
+        }
+    }
+
+    public static bool TryGetPowerShares(
+        PowerModel power,
+        out IReadOnlyList<PlayerDamageShare> shares)
+    {
+        lock (PowerOriginSyncRoot)
+        {
+            if (PowerOwnerships.TryGetValue(power, out var record)
+                && record.TryGetShares(out shares))
+            {
+                return true;
+            }
+        }
+
+        shares = Array.Empty<PlayerDamageShare>();
+        return false;
+    }
+
+    private static IReadOnlyList<PlayerDamageShare> GetPowerSharesWithFallback(PowerModel power)
+    {
+        if (TryGetPowerShares(power, out var shares))
+        {
+            return shares;
+        }
+
+        var player = ResolvePowerPlayer(power, null);
+        return player is null
+            ? Array.Empty<PlayerDamageShare>()
+            : new[] { new PlayerDamageShare(player, 1m) };
+    }
+
+    private static IReadOnlyList<PlayerDamageShare> BuildAccelerantShares(PowerModel poisonPower)
+    {
+        var weightedShares = new List<PlayerDamageShare>();
+        foreach (var opponent in poisonPower.Owner.CombatState
+                     .GetOpponentsOf(poisonPower.Owner)
+                     .Where(creature => creature.IsAlive))
+        {
+            var accelerant = opponent.GetPower<AccelerantPower>();
+            if (accelerant is null || accelerant.Amount <= 0)
+            {
+                continue;
+            }
+
+            var ownershipShares = TryGetPowerShares(accelerant, out var recordedShares)
+                ? recordedShares
+                : GetPowerSharesWithFallback(accelerant);
+            foreach (var ownershipShare in ownershipShares)
+            {
+                weightedShares.Add(new PlayerDamageShare(
+                    ownershipShare.Player,
+                    accelerant.Amount * ownershipShare.Fraction));
+            }
+        }
+
+        return NormalizeShares(weightedShares);
+    }
+
+    private static IReadOnlyList<PlayerDamageShare> NormalizeShares(
+        IEnumerable<PlayerDamageShare> shares)
+    {
+        var grouped = new Dictionary<ulong, PlayerDamageShare>();
+        foreach (var share in shares)
+        {
+            if (share.Player is null || share.Fraction <= 0)
+            {
+                continue;
+            }
+
+            if (grouped.TryGetValue(share.Player.NetId, out var existing))
+            {
+                grouped[share.Player.NetId] = existing with
+                {
+                    Fraction = existing.Fraction + share.Fraction
+                };
+            }
+            else
+            {
+                grouped.Add(share.Player.NetId, share);
+            }
+        }
+
+        var total = grouped.Values.Sum(share => share.Fraction);
+        if (total <= 0)
+        {
+            return Array.Empty<PlayerDamageShare>();
+        }
+
+        return grouped.Values
+            .Select(share => share with { Fraction = share.Fraction / total })
+            .OrderByDescending(share => share.Fraction)
+            .ThenBy(share => share.Player.NetId)
+            .ToArray();
+    }
+
+    private static Player? ResolvePowerPlayer(PowerModel power, Creature? applier)
+    {
+        return GetPlayerForCreature(applier)
+            ?? GetPlayerForCreature(power.Applier)
+            ?? GetPlayerForCreature(power.Owner);
     }
 
     private static int ToAppliedStacks(decimal amount)
@@ -856,6 +1080,96 @@ public static class DpsAttribution
         string InternalId,
         DamageSourceType SourceType,
         int AppliedStacks);
+
+    private sealed class PowerOwnershipRecord
+    {
+        private readonly Dictionary<ulong, PowerOwnershipEntry> _entries = new();
+
+        public void Record(Player player, decimal amount)
+        {
+            if (_entries.TryGetValue(player.NetId, out var entry))
+            {
+                entry.Player = player;
+                entry.AppliedAmount += amount;
+                return;
+            }
+
+            _entries.Add(player.NetId, new PowerOwnershipEntry(player, amount));
+        }
+
+        public bool TryGetShares(out IReadOnlyList<PlayerDamageShare> shares)
+        {
+            var total = _entries.Values.Sum(entry => entry.AppliedAmount);
+            if (total <= 0)
+            {
+                shares = Array.Empty<PlayerDamageShare>();
+                return false;
+            }
+
+            shares = _entries.Values
+                .Where(entry => entry.AppliedAmount > 0)
+                .Select(entry => new PlayerDamageShare(
+                    entry.Player,
+                    entry.AppliedAmount / total))
+                .OrderByDescending(share => share.Fraction)
+                .ThenBy(share => share.Player.NetId)
+                .ToArray();
+            return shares.Count > 0;
+        }
+    }
+
+    private sealed class PowerOwnershipEntry
+    {
+        public PowerOwnershipEntry(Player player, decimal appliedAmount)
+        {
+            Player = player;
+            AppliedAmount = appliedAmount;
+        }
+
+        public Player Player { get; set; }
+
+        public decimal AppliedAmount { get; set; }
+    }
+
+    private sealed class PoisonTickState
+    {
+        public PoisonTickState(
+            PoisonPower power,
+            IReadOnlyList<PlayerDamageShare> poisonShares,
+            IReadOnlyList<PlayerDamageShare> accelerantShares,
+            int remaining)
+        {
+            Power = power;
+            PoisonShares = poisonShares;
+            AccelerantShares = accelerantShares;
+            Remaining = remaining;
+        }
+
+        public PoisonPower Power { get; }
+
+        public IReadOnlyList<PlayerDamageShare> PoisonShares { get; }
+
+        public IReadOnlyList<PlayerDamageShare> AccelerantShares { get; }
+
+        public int TickIndex { get; private set; }
+
+        public int Remaining { get; private set; }
+
+        public void Consume(out IReadOnlyList<PlayerDamageShare> shares)
+        {
+            if (Remaining <= 0)
+            {
+                shares = Array.Empty<PlayerDamageShare>();
+                return;
+            }
+
+            shares = TickIndex == 0 || AccelerantShares.Count == 0
+                ? PoisonShares
+                : AccelerantShares;
+            TickIndex++;
+            Remaining--;
+        }
+    }
 
     private sealed class PowerOriginRecord
     {

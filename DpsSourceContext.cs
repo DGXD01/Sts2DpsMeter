@@ -21,7 +21,7 @@ public static class DpsSourceContext
     private const string HarmonyId = "DGXD01.Sts2DpsMeter";
     private static readonly object SyncRoot = new();
     private static readonly ConditionalWeakTable<PlayerChoiceContext, Stack<AbstractModel>> ModelStacks = new();
-    private static readonly Dictionary<ulong, Stack<AbstractModel>> EffectSources = new();
+    private static readonly Dictionary<ulong, EffectSourceScope> EffectSources = new();
     private static readonly Stopwatch RecentTimer = Stopwatch.StartNew();
     private static AbstractModel? _recentModel;
     private static long _recentModelTimestamp;
@@ -29,6 +29,7 @@ public static class DpsSourceContext
     private static long _recentOrbTimestamp;
     private static bool _initialized;
     private static bool _initializationFailed;
+    private static ulong _nextEffectToken;
 
     public static bool Initialize()
     {
@@ -250,9 +251,21 @@ public static class DpsSourceContext
     {
         lock (SyncRoot)
         {
-            return EffectSources.TryGetValue(playerNetId, out var stack) && stack.Count > 0
-                ? stack.Peek()
-                : null;
+            EffectSourceScope? current = null;
+            foreach (var scope in EffectSources.Values)
+            {
+                if (scope.PlayerNetId != playerNetId)
+                {
+                    continue;
+                }
+
+                if (current is null || scope.Sequence > current.Sequence)
+                {
+                    current = scope;
+                }
+            }
+
+            return current?.Model;
         }
     }
 
@@ -267,6 +280,7 @@ public static class DpsSourceContext
         lock (SyncRoot)
         {
             EffectSources.Clear();
+            _nextEffectToken = 0;
         }
     }
 
@@ -601,25 +615,24 @@ public static class DpsSourceContext
 
         lock (SyncRoot)
         {
-            if (!EffectSources.TryGetValue(owner.NetId, out var stack))
+            var token = unchecked(++_nextEffectToken);
+            if (token == 0)
             {
-                stack = new Stack<AbstractModel>();
-                EffectSources[owner.NetId] = stack;
+                token = unchecked(++_nextEffectToken);
             }
 
-            stack.Push(model);
+            EffectSources[token] = new EffectSourceScope(owner.NetId, model, token);
+            return token;
         }
-
-        return owner.NetId;
     }
 
-    private static Task PopEffectImmediately(ulong playerNetId)
+    private static Task PopEffectImmediately(ulong token)
     {
-        PopEffect(playerNetId);
+        PopEffect(token);
         return Task.CompletedTask;
     }
 
-    private static async Task PopEffectAfter(Task inner, ulong playerNetId)
+    private static async Task PopEffectAfter(Task inner, ulong token)
     {
         try
         {
@@ -627,24 +640,15 @@ public static class DpsSourceContext
         }
         finally
         {
-            PopEffect(playerNetId);
+            PopEffect(token);
         }
     }
 
-    private static void PopEffect(ulong playerNetId)
+    private static void PopEffect(ulong token)
     {
         lock (SyncRoot)
         {
-            if (!EffectSources.TryGetValue(playerNetId, out var stack) || stack.Count == 0)
-            {
-                return;
-            }
-
-            stack.Pop();
-            if (stack.Count == 0)
-            {
-                EffectSources.Remove(playerNetId);
-            }
+            EffectSources.Remove(token);
         }
     }
 
@@ -679,4 +683,9 @@ public static class DpsSourceContext
             }
         }
     }
+
+    private sealed record EffectSourceScope(
+        ulong PlayerNetId,
+        AbstractModel Model,
+        ulong Sequence);
 }

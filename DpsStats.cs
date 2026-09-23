@@ -164,7 +164,7 @@ public static class DpsStats
             }
 
             var player = ResolveRecordedPlayer(attribution, capture.Power.Applier, capture.Target);
-            if (player is null)
+            if (player is null && !HasPlayerShares(attribution))
             {
                 continue;
             }
@@ -179,7 +179,7 @@ public static class DpsStats
                 WasTargetKilled = true
             };
 
-            if (RecordDamage(player, attribution, result, capture.HealthBeforeKill))
+            if (RecordDamage(player, attribution, result))
             {
                 recorded = true;
             }
@@ -209,12 +209,12 @@ public static class DpsStats
         }
 
         var player = ResolveRecordedPlayer(attribution, dealer, target);
-        if (player is null)
+        if (player is null && !HasPlayerShares(attribution))
         {
             return false;
         }
 
-        return RecordDamage(player, attribution, result, damage);
+        return RecordDamage(player, attribution, result);
     }
 
     public static bool RecordBlockGained(Player player, decimal amount)
@@ -327,11 +327,16 @@ public static class DpsStats
     }
 
     private static bool RecordDamage(
-        Player player,
+        Player? fallbackPlayer,
         DamageAttribution attribution,
-        DamageResult result,
-        int damage)
+        DamageResult result)
     {
+        var allocations = ResolveDamageAllocations(fallbackPlayer, attribution, result);
+        if (allocations.Count == 0)
+        {
+            return false;
+        }
+
         lock (SyncRoot)
         {
             if (!_active)
@@ -339,67 +344,177 @@ public static class DpsStats
                 return false;
             }
 
-            if (!Players.TryGetValue(player.NetId, out var stats))
+            foreach (var allocation in allocations)
             {
-                stats = CreatePlayerAccumulator(player);
-                Players.Add(player.NetId, stats);
-            }
-
-            ApplyPlayerMetadata(stats, player);
-
-            var sourceStats = attribution.Category switch
-            {
-                DamageCategory.Output => stats.DamageBySource,
-                DamageCategory.Incoming => stats.IncomingBySource,
-                DamageCategory.SelfLoss => stats.SelfLossBySource,
-                _ => stats.DamageBySource
-            };
-            var sourceKey = BuildSourceKey(attribution);
-            if (!sourceStats.TryGetValue(sourceKey, out var source))
-            {
-                source = new SourceAccumulator(attribution);
-                sourceStats.Add(sourceKey, source);
-            }
-
-            source.Add(damage, result);
-
-            switch (attribution.Category)
-            {
-                case DamageCategory.Output:
-                    stats.TotalDamage += damage;
-                    stats.EffectiveHpDamage += result.UnblockedDamage;
-                    stats.BlockedDamage += result.BlockedDamage;
-                    stats.UnblockedDamage += result.UnblockedDamage;
-                    stats.OverkillDamage += result.OverkillDamage;
-                    stats.HitCount++;
-                    if (damage > stats.MaxHit)
-                    {
-                        stats.MaxHit = damage;
-                        stats.MaxHitSource = attribution.DisplayName;
-                    }
-
-                    stats.DamageByTurn[_currentTurn] =
-                        stats.DamageByTurn.GetValueOrDefault(_currentTurn) + damage;
-                    AddOutputBreakdown(stats, attribution, damage, result, _currentTurn);
-                    break;
-                case DamageCategory.Incoming:
-                    stats.IncomingDamage += damage;
-                    stats.IncomingHits++;
-                    stats.IncomingDamageByTurn[_currentTurn] =
-                        stats.IncomingDamageByTurn.GetValueOrDefault(_currentTurn) + damage;
-                    break;
-                case DamageCategory.SelfLoss:
-                    stats.SelfLossDamage += damage;
-                    stats.SelfLossHits++;
-                    stats.SelfLossDamageByTurn[_currentTurn] =
-                        stats.SelfLossDamageByTurn.GetValueOrDefault(_currentTurn) + damage;
-                    break;
+                RecordDamageAllocation(allocation, attribution);
             }
         }
 
         return true;
     }
 
+    private static void RecordDamageAllocation(
+        DamageAllocation allocation,
+        DamageAttribution attribution)
+    {
+        var stats = GetOrCreatePlayer(allocation.Player);
+        var damage = allocation.Damage;
+        var sourceStats = attribution.Category switch
+        {
+            DamageCategory.Output => stats.DamageBySource,
+            DamageCategory.Incoming => stats.IncomingBySource,
+            DamageCategory.SelfLoss => stats.SelfLossBySource,
+            _ => stats.DamageBySource
+        };
+        var sourceKey = BuildSourceKey(attribution);
+        if (!sourceStats.TryGetValue(sourceKey, out var source))
+        {
+            source = new SourceAccumulator(attribution);
+            sourceStats.Add(sourceKey, source);
+        }
+
+        source.Add(
+            damage,
+            allocation.BlockedDamage,
+            allocation.UnblockedDamage,
+            allocation.OverkillDamage);
+
+        switch (attribution.Category)
+        {
+            case DamageCategory.Output:
+                stats.TotalDamage += damage;
+                stats.EffectiveHpDamage += allocation.UnblockedDamage;
+                stats.BlockedDamage += allocation.BlockedDamage;
+                stats.UnblockedDamage += allocation.UnblockedDamage;
+                stats.OverkillDamage += allocation.OverkillDamage;
+                stats.HitCount++;
+                if (damage > stats.MaxHit)
+                {
+                    stats.MaxHit = (int)damage;
+                    stats.MaxHitSource = attribution.DisplayName;
+                }
+
+                stats.DamageByTurn[_currentTurn] =
+                    stats.DamageByTurn.GetValueOrDefault(_currentTurn) + damage;
+                AddOutputBreakdown(stats, attribution, allocation, _currentTurn);
+                break;
+            case DamageCategory.Incoming:
+                stats.IncomingDamage += damage;
+                stats.IncomingHits++;
+                stats.IncomingDamageByTurn[_currentTurn] =
+                    stats.IncomingDamageByTurn.GetValueOrDefault(_currentTurn) + damage;
+                break;
+            case DamageCategory.SelfLoss:
+                stats.SelfLossDamage += damage;
+                stats.SelfLossHits++;
+                stats.SelfLossDamageByTurn[_currentTurn] =
+                    stats.SelfLossDamageByTurn.GetValueOrDefault(_currentTurn) + damage;
+                break;
+        }
+    }
+
+    private static IReadOnlyList<DamageAllocation> ResolveDamageAllocations(
+        Player? fallbackPlayer,
+        DamageAttribution attribution,
+        DamageResult result)
+    {
+        if (attribution.Category != DamageCategory.Output
+            || attribution.PlayerShares is not { Count: > 0 } shares)
+        {
+            return fallbackPlayer is null
+                ? Array.Empty<DamageAllocation>()
+                : new[] { CreateDamageAllocation(fallbackPlayer, result) };
+        }
+
+        var positiveShares = shares
+            .Where(share => share.Fraction > 0)
+            .GroupBy(share => share.Player.NetId)
+            .Select(group => group.First() with
+            {
+                Fraction = group.Sum(share => share.Fraction)
+            })
+            .ToArray();
+
+        if (positiveShares.Length == 0)
+        {
+            return fallbackPlayer is null
+                ? Array.Empty<DamageAllocation>()
+                : new[] { CreateDamageAllocation(fallbackPlayer, result) };
+        }
+
+        var blockedDamage = AllocateDamageComponent(result.BlockedDamage, positiveShares);
+        var unblockedDamage = AllocateDamageComponent(result.UnblockedDamage, positiveShares);
+        var overkillDamage = AllocateDamageComponent(result.OverkillDamage, positiveShares);
+
+        return positiveShares
+            .Select(share =>
+            {
+                var netId = share.Player.NetId;
+                return new DamageAllocation(
+                    share.Player,
+                    blockedDamage[netId],
+                    unblockedDamage[netId],
+                    overkillDamage[netId]);
+            })
+            .Where(allocation => allocation.Damage > 0)
+            .ToArray();
+    }
+
+    private static DamageAllocation CreateDamageAllocation(Player player, DamageResult result)
+    {
+        return new DamageAllocation(
+            player,
+            result.BlockedDamage,
+            result.UnblockedDamage,
+            result.OverkillDamage);
+    }
+
+    private static Dictionary<ulong, long> AllocateDamageComponent(
+        int total,
+        IReadOnlyList<PlayerDamageShare> shares)
+    {
+        var allocations = shares.ToDictionary(share => share.Player.NetId, _ => 0L);
+        if (total <= 0 || shares.Count == 0)
+        {
+            return allocations;
+        }
+
+        long assigned = 0;
+        var remainders = new List<(ulong NetId, decimal Remainder)>(shares.Count);
+        foreach (var share in shares)
+        {
+            var raw = total * share.Fraction;
+            var floor = decimal.ToInt64(decimal.Floor(raw));
+            allocations[share.Player.NetId] = floor;
+            assigned += floor;
+            remainders.Add((share.Player.NetId, raw - floor));
+        }
+
+        var residual = total - assigned;
+        if (residual <= 0)
+        {
+            return allocations;
+        }
+
+        var order = remainders
+            .OrderByDescending(item => item.Remainder)
+            .ThenBy(item => item.NetId)
+            .Select(item => item.NetId)
+            .ToArray();
+        for (long index = 0; index < residual; index++)
+        {
+            var netId = order[(int)(index % order.Length)];
+            allocations[netId]++;
+        }
+
+        return allocations;
+    }
+
+    private static bool HasPlayerShares(DamageAttribution attribution)
+    {
+        return attribution.Category == DamageCategory.Output
+            && attribution.PlayerShares is { Count: > 0 };
+    }
     public static CombatStatsSnapshot GetSnapshot()
     {
         lock (SyncRoot)
@@ -492,7 +607,13 @@ public static class DpsStats
     {
         if (attribution.Category == DamageCategory.Output)
         {
-            return attribution.AccountablePlayer;
+            var sharedPlayer = attribution.PlayerShares?
+                .FirstOrDefault(share => share.Fraction > 0)
+                ?.Player;
+            return sharedPlayer
+                ?? attribution.AccountablePlayer
+                ?? GetPlayerForCreature(dealer)
+                ?? GetPlayerForCreature(target);
         }
 
         return GetPlayerForCreature(target)
@@ -559,8 +680,7 @@ public static class DpsStats
     private static void AddOutputBreakdown(
         PlayerAccumulator player,
         DamageAttribution attribution,
-        long damage,
-        DamageResult result,
+        DamageAllocation allocation,
         int turn)
     {
         var identity = ResolveOutputGroupIdentity(attribution);
@@ -577,7 +697,11 @@ public static class DpsStats
             cards.Add(identity.GroupId, card);
         }
 
-        card.Add(damage, result);
+        card.Add(
+            allocation.Damage,
+            allocation.BlockedDamage,
+            allocation.UnblockedDamage,
+            allocation.OverkillDamage);
 
         if (!player.DamageByMechanismByTurn.TryGetValue(turn, out var mechanisms))
         {
@@ -591,7 +715,11 @@ public static class DpsStats
             mechanisms.Add(attribution.Mechanism, mechanism);
         }
 
-        mechanism.Add(damage, result);
+        mechanism.Add(
+            allocation.Damage,
+            allocation.BlockedDamage,
+            allocation.UnblockedDamage,
+            allocation.OverkillDamage);
     }
 
     private static OutputGroupIdentity ResolveOutputGroupIdentity(DamageAttribution attribution)
@@ -859,6 +987,15 @@ public static class DpsStats
         int HealthBeforeKill,
         DoomPower Power);
 
+    private readonly record struct DamageAllocation(
+        Player Player,
+        long BlockedDamage,
+        long UnblockedDamage,
+        long OverkillDamage)
+    {
+        public long Damage => BlockedDamage + UnblockedDamage + OverkillDamage;
+    }
+
     private sealed record OutputGroupIdentity(
         string GroupId,
         string DisplayName,
@@ -909,10 +1046,15 @@ public static class DpsStats
 
         public void Add(long damage, DamageResult result)
         {
+            Add(damage, result.BlockedDamage, result.UnblockedDamage, result.OverkillDamage);
+        }
+
+        public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
+        {
             Damage += damage;
-            BlockedDamage += result.BlockedDamage;
-            UnblockedDamage += result.UnblockedDamage;
-            OverkillDamage += result.OverkillDamage;
+            BlockedDamage += blockedDamage;
+            UnblockedDamage += unblockedDamage;
+            OverkillDamage += overkillDamage;
             Hits++;
         }
 
@@ -957,10 +1099,15 @@ public static class DpsStats
 
         public void Add(long damage, DamageResult result)
         {
+            Add(damage, result.BlockedDamage, result.UnblockedDamage, result.OverkillDamage);
+        }
+
+        public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
+        {
             Damage += damage;
-            BlockedDamage += result.BlockedDamage;
-            UnblockedDamage += result.UnblockedDamage;
-            OverkillDamage += result.OverkillDamage;
+            BlockedDamage += blockedDamage;
+            UnblockedDamage += unblockedDamage;
+            OverkillDamage += overkillDamage;
             Hits++;
         }
 
@@ -997,10 +1144,15 @@ public static class DpsStats
 
         public void Add(long damage, DamageResult result)
         {
+            Add(damage, result.BlockedDamage, result.UnblockedDamage, result.OverkillDamage);
+        }
+
+        public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
+        {
             Damage += damage;
-            BlockedDamage += result.BlockedDamage;
-            UnblockedDamage += result.UnblockedDamage;
-            OverkillDamage += result.OverkillDamage;
+            BlockedDamage += blockedDamage;
+            UnblockedDamage += unblockedDamage;
+            OverkillDamage += overkillDamage;
             Hits++;
         }
 

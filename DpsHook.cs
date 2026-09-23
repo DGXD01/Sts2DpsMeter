@@ -29,7 +29,7 @@ public sealed class DpsHook : AbstractModel
         {
             AbstractModel? sourceModel = cardSource;
             sourceModel ??= DpsSourceContext.GetCurrentEffect(applier);
-            DpsAttribution.RecordPowerOrigin(power, amount, sourceModel);
+            DpsAttribution.RecordPowerOrigin(power, amount, applier, sourceModel);
         }
         catch (Exception exception)
         {
