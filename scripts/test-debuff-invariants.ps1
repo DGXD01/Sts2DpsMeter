@@ -138,10 +138,13 @@ public static class DpsAttributionInvariantRunner
         {
             AssertVulnerableCase("只有易伤", 100, 1.5d, 0d, 0d, false, 1.5d, 50d, 0d, 0d);
             AssertVulnerableCase("易伤+PaperPhrog", 100, 1.5d, 0.25d, 0d, false, 1.75d, 50d, 0d, 25d);
+            AssertVulnerableCase("易伤+Cruelty5", 100, 1.5d, 0d, 0.05d, false, 1.55d, 50d, 0d, 5d);
             AssertVulnerableCase("易伤+Cruelty20", 100, 1.5d, 0d, 0.2d, false, 1.7d, 50d, 0d, 20d);
+            AssertVulnerableCase("易伤+Cruelty50+Debilitate", 100, 1.5d, 0d, 0.5d, true, 3d, 50d, 50d, 100d);
             AssertVulnerableCase("易伤+Debilitate", 100, 1.5d, 0d, 0d, true, 2d, 50d, 50d, 0d);
             AssertVulnerableCase("易伤+PaperPhrog+Debilitate", 100, 1.5d, 0.25d, 0d, true, 2.5d, 50d, 50d, 50d);
-            AssertVulnerableCase("易伤+Cruelty20+Debilitate", 100, 1.5d, 0d, 0.2d, true, 2.4d, 50d, 50d, 40d);
+            AssertVulnerableCase("易伤+PaperPhrog+Cruelty20", 100, 1.5d, 0.25d, 0.2d, false, 1.95d, 50d, 0d, 45d);
+            AssertVulnerableCase("易伤+PaperPhrog+Cruelty20+Debilitate", 100, 1.5d, 0.25d, 0.2d, true, 2.9d, 50d, 50d, 90d);
         });
         Test("转移总量取整与封顶", () =>
         {

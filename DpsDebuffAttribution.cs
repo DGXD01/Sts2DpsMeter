@@ -84,27 +84,53 @@ internal static class DpsDebuffAttribution
                 continue;
             }
 
-            var totalContribution = extraDamage * logContribution * factorWeight;
-            foreach (var share in DpsAttribution.GetPowerSharesWithFallback(debuffFactor.Power))
+            var factorContribution = extraDamage
+                * logContribution
+                * factorWeight
+                * debuffFactor.TransferableFraction;
+            if (factorContribution <= 0d)
             {
-                if (share.Player is null
-                    || share.Fraction <= 0m
-                    || share.Player.NetId == dealerPlayer.NetId)
+                continue;
+            }
+
+            var componentWeightTotal = debuffFactor.Components.Sum(
+                component => Math.Max(component.Weight, 0d));
+            if (componentWeightTotal <= 0d)
+            {
+                continue;
+            }
+
+            foreach (var component in debuffFactor.Components)
+            {
+                var componentContribution = factorContribution
+                    * Math.Max(component.Weight, 0d)
+                    / componentWeightTotal;
+                if (componentContribution <= 0d)
                 {
                     continue;
                 }
 
-                var amount = totalContribution * (double)share.Fraction;
-                if (amount <= 0d)
+                foreach (var share in DpsAttribution.GetPowerSharesWithFallback(component.Power))
                 {
-                    continue;
-                }
+                    if (share.Player is null
+                        || share.Fraction <= 0m
+                        || share.Player.NetId == dealerPlayer.NetId)
+                    {
+                        continue;
+                    }
 
-                rawTransfers.Add(new RawDebuffTransfer(
-                    share.Player,
-                    debuffFactor.InternalId,
-                    debuffFactor.DisplayName,
-                    amount));
+                    var amount = componentContribution * (double)share.Fraction;
+                    if (amount <= 0d)
+                    {
+                        continue;
+                    }
+
+                    rawTransfers.Add(new RawDebuffTransfer(
+                        share.Player,
+                        component.InternalId,
+                        component.DisplayName,
+                        amount));
+                }
             }
         }
 
@@ -167,37 +193,40 @@ internal static class DpsDebuffAttribution
             var vulnerableMultiplier = vulnerable.DynamicVars["DamageIncrease"].BaseValue;
             if (vulnerableMultiplier > VulnerablePowerMinimumMultiplier)
             {
-                factors.Add(new DebuffFactor(
-                    "ASSIST_VULNERABLE_POWER",
-                    "助攻：易伤",
-                    vulnerableMultiplier,
-                    vulnerable));
-
-                var expandedMultiplier = vulnerableMultiplier;
-                var paperPhrog = dealer.Player?.GetRelic<PaperPhrog>();
-                if (paperPhrog is not null)
-                {
-                    expandedMultiplier += 0.25m;
-                }
-
+                var paperPhrogExtra = dealer.Player?.GetRelic<PaperPhrog>() is null ? 0d : 0.25d;
                 var cruelty = dealer.GetPower<CrueltyPower>();
-                if (cruelty is not null)
-                {
-                    expandedMultiplier += (decimal)cruelty.Amount / 100m;
-                }
-
+                var crueltyExtra = cruelty is null ? 0d : (double)cruelty.Amount / 100d;
                 var debilitate = target.GetPower<DebilitatePower>();
-                if (debilitate is not null && expandedMultiplier > 0m)
+                // 此处只需要拆分比例，单位伤害即可；实际金额会在 Resolve 中按本次伤害分配。
+                var breakdown = DpsAttributionMath.CalculateVulnerableBreakdown(
+                    1,
+                    (double)vulnerableMultiplier,
+                    paperPhrogExtra,
+                    crueltyExtra,
+                    debilitate is not null);
+                if (breakdown.TotalExtraDamage > 0d)
                 {
-                    var debilitatedMultiplier = expandedMultiplier + (expandedMultiplier - 1m);
-                    if (debilitatedMultiplier > expandedMultiplier)
+                    var components = new List<DebuffFactorComponent>
                     {
-                        factors.Add(new DebuffFactor(
+                        new(
+                            "ASSIST_VULNERABLE_POWER",
+                            "助攻：易伤",
+                            vulnerable,
+                            breakdown.VulnerableExtraDamage)
+                    };
+                    if (debilitate is not null && breakdown.DebilitateExtraDamage > 0d)
+                    {
+                        components.Add(new DebuffFactorComponent(
                             "ASSIST_DEBILITATE_VULNERABLE",
                             "助攻：易伤强化",
-                            debilitatedMultiplier / expandedMultiplier,
-                            debilitate));
+                            debilitate,
+                            breakdown.DebilitateExtraDamage));
                     }
+
+                    factors.Add(new DebuffFactor(
+                        (decimal)breakdown.FinalMultiplier,
+                        breakdown.TransferableExtraDamage / breakdown.TotalExtraDamage,
+                        components));
                 }
             }
         }
@@ -207,7 +236,7 @@ internal static class DpsDebuffAttribution
             var multiplier = (decimal)flanking.Amount;
             if (multiplier > 1m && !ReferenceEquals(dealer, flanking.Applier))
             {
-                factors.Add(new DebuffFactor(
+                factors.Add(CreateSingleFactor(
                     "ASSIST_FLANKING_POWER",
                     "助攻：侧击",
                     multiplier,
@@ -220,7 +249,7 @@ internal static class DpsDebuffAttribution
             var multiplier = (decimal)knockdown.Amount;
             if (multiplier > 1m && !ReferenceEquals(dealer, knockdown.Applier))
             {
-                factors.Add(new DebuffFactor(
+                factors.Add(CreateSingleFactor(
                     "ASSIST_KNOCKDOWN_POWER",
                     "助攻：击倒",
                     multiplier,
@@ -234,7 +263,7 @@ internal static class DpsDebuffAttribution
             var slowMultiplier = 1m + 0.1m * slow.DynamicVars["SlowAmount"].BaseValue;
             if (slowMultiplier > 1m)
             {
-                factors.Add(new DebuffFactor(
+                factors.Add(CreateSingleFactor(
                     "ASSIST_SLOW_POWER",
                     "助攻：减速",
                     slowMultiplier,
@@ -243,6 +272,21 @@ internal static class DpsDebuffAttribution
         }
 
         return factors;
+    }
+
+    private static DebuffFactor CreateSingleFactor(
+        string internalId,
+        string displayName,
+        decimal multiplier,
+        PowerModel power)
+    {
+        return new DebuffFactor(
+            multiplier,
+            1d,
+            new[]
+            {
+                new DebuffFactorComponent(internalId, displayName, power, 1d)
+            });
     }
 
     private static DamageAttribution CreateAttribution(
@@ -266,10 +310,15 @@ internal static class DpsDebuffAttribution
     }
 
     private sealed record DebuffFactor(
+        decimal Multiplier,
+        double TransferableFraction,
+        IReadOnlyList<DebuffFactorComponent> Components);
+
+    private sealed record DebuffFactorComponent(
         string InternalId,
         string DisplayName,
-        decimal Multiplier,
-        PowerModel Power);
+        PowerModel Power,
+        double Weight);
 
     private sealed record RawDebuffTransfer(
         Player Player,
