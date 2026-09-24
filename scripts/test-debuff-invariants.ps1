@@ -16,6 +16,29 @@ foreach ($requiredPath in @($mathSourcePath, $statsSourcePath, $debuffSourcePath
     }
 }
 
+$statsSourceText = Get-Content -LiteralPath $statsSourcePath -Raw
+$accountingMatch = [regex]::Match(
+    $statsSourceText,
+    '(?s)// DPS_STATS_TESTABLE_ACCOUNTING_BEGIN\s*(?<body>.*?)\s*// DPS_STATS_TESTABLE_ACCOUNTING_END')
+if (-not $accountingMatch.Success) {
+    throw '无法从 DpsStats.cs 提取可测试统计账本块。'
+}
+
+$statsAccountingSourcePath = Join-Path $env:TEMP "dps-stats-accounting-$([guid]::NewGuid().ToString('N')).cs"
+$statsAccountingSource = @"
+using System;
+using System.Collections.Generic;
+
+namespace Sts2DpsMeter
+{
+$($accountingMatch.Groups['body'].Value)
+}
+"@
+[System.IO.File]::WriteAllText(
+    $statsAccountingSourcePath,
+    $statsAccountingSource,
+    [System.Text.UTF8Encoding]::new($false))
+
 $runnerPath = Join-Path $env:TEMP "dps-attribution-invariants-$([guid]::NewGuid().ToString('N')).cs"
 $runnerSource = @'
 using System;
@@ -28,6 +51,7 @@ public static class DpsAttributionInvariantRunner
     public static string Run()
     {
         var passed = 0;
+        var passedNames = new List<string>();
 
         void Test(string name, Action body)
         {
@@ -35,6 +59,7 @@ public static class DpsAttributionInvariantRunner
             {
                 body();
                 passed++;
+                passedNames.Add(name);
             }
             catch (Exception exception)
             {
@@ -53,6 +78,14 @@ public static class DpsAttributionInvariantRunner
         static void AssertEqual(long expected, long actual, string message)
         {
             if (expected != actual)
+            {
+                throw new InvalidOperationException($"{message}，期望 {expected}，实际 {actual}");
+            }
+        }
+
+        static void AssertTextEqual(string expected, string actual, string message)
+        {
+            if (!string.Equals(expected, actual, StringComparison.Ordinal))
             {
                 throw new InvalidOperationException($"{message}，期望 {expected}，实际 {actual}");
             }
@@ -450,7 +483,472 @@ public static class DpsAttributionInvariantRunner
             AssertEqual(133, TransferredDamage(full), "factor=1 转移取整错误");
             AssertTrue(TransferredDamage(full) > TransferredDamage(half), "factor 增大应提高转移量");
         });
-        return $"纯计算不变量通过：{passed} 项";
+        static IReadOnlyList<DebuffFactor> VulnerableFactors(
+            ulong playerId,
+            double vulnerableMultiplier = 1.5d,
+            double paperPhrogExtra = 0d)
+        {
+            return DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    paperPhrogExtra,
+                    0d,
+                    Power(
+                        DpsDebuffPowerKind.Vulnerable,
+                        vulnerableMultiplier,
+                        false,
+                        Share(playerId, 1m))));
+        }
+
+        static void ApplyAttack(
+            IReadOnlyList<DpsStatsDamageLedger> players,
+            int dealerIndex,
+            long blockedDamage,
+            long unblockedDamage,
+            long overkillDamage,
+            bool allowDebuffTransfer,
+            float configuredFactor,
+            IReadOnlyList<DebuffFactor> factors,
+            string sourceKey,
+            string sourceName)
+        {
+            var original = new DamageComponents(
+                blockedDamage,
+                unblockedDamage,
+                overkillDamage);
+            if (original.Damage <= 0)
+            {
+                return;
+            }
+
+            var dealerPlayerId = (ulong)(dealerIndex + 1);
+            var resolvedFactor = DpsStatsAccounting.ResolveAttributionFactor(
+                allowDebuffTransfer,
+                configuredFactor);
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(
+                blockedDamage,
+                unblockedDamage,
+                overkillDamage,
+                dealerPlayerId,
+                resolvedFactor,
+                factors);
+            if (!DpsAttributionMath.TrySubtractComponents(
+                    original,
+                    transfers.Select(item => item.Components).ToArray(),
+                    out var remaining))
+            {
+                transfers = Array.Empty<DpsDebuffTransferAllocation>();
+                remaining = original;
+            }
+
+            players[dealerIndex].Add(
+                sourceKey,
+                sourceName,
+                remaining.BlockedDamage,
+                remaining.UnblockedDamage,
+                remaining.OverkillDamage,
+                true,
+                original.Damage);
+
+            foreach (var transfer in transfers)
+            {
+                var targetIndex = checked((int)transfer.PlayerId - 1);
+                AssertTrue(
+                    targetIndex >= 0 && targetIndex < players.Count,
+                    $"转移目标玩家索引越界：{transfer.PlayerId}");
+                players[targetIndex].Add(
+                    transfer.InternalId,
+                    transfer.DisplayName,
+                    transfer.Components.BlockedDamage,
+                    transfer.Components.UnblockedDamage,
+                    transfer.Components.OverkillDamage,
+                    false);
+            }
+        }
+
+        static void AssertTotalsConserved(
+            IReadOnlyList<DpsStatsDamageLedger> players,
+            long blockedDamage,
+            long unblockedDamage,
+            long overkillDamage,
+            string message)
+        {
+            AssertEqual(
+                blockedDamage,
+                players.Sum(player => player.Total.BlockedDamage),
+                $"{message}：blocked 分量未守恒");
+            AssertEqual(
+                unblockedDamage,
+                players.Sum(player => player.Total.UnblockedDamage),
+                $"{message}：unblocked 分量未守恒");
+            AssertEqual(
+                overkillDamage,
+                players.Sum(player => player.Total.OverkillDamage),
+                $"{message}：overkill 分量未守恒");
+            AssertEqual(
+                blockedDamage + unblockedDamage + overkillDamage,
+                players.Sum(player => player.Total.Damage),
+                $"{message}：总伤害未守恒");
+        }
+
+        Test("统计账本：零伤害和非法分量不记账", () =>
+        {
+            var ledger = new DpsStatsDamageLedger();
+            AssertTrue(
+                !ledger.Add("zero", "零伤害", 0, 0, 0, true, 0),
+                "零伤害不应记账");
+            AssertTrue(
+                !ledger.Add("negative", "非法负数", -1, 0, 0, true, -1),
+                "负数分量不应记账");
+            AssertEqual(0, ledger.Total.Damage, "零伤害账本总伤害应保持为零");
+            AssertEqual(0, ledger.Total.Hits, "零伤害账本命中数应保持为零");
+            AssertEqual(0, ledger.Sources.Count, "零伤害账本不应创建来源明细");
+        });
+
+        Test("统计账本：factor=0 与旧行为一致", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                0,
+                100,
+                0,
+                true,
+                0f,
+                VulnerableFactors(2),
+                "ATTACK",
+                "攻击者：打击");
+
+            AssertEqual(100, players[0].Total.Damage, "factor=0 时攻击者应保留全部伤害");
+            AssertEqual(0, players[1].Total.Damage, "factor=0 时施加者不应获得助攻伤害");
+            AssertEqual(1, players[0].Total.Hits, "factor=0 时攻击者应保留命中");
+            AssertEqual(0, players[1].Total.Hits, "factor=0 时施加者不应获得命中");
+        });
+
+        Test("统计账本：factor=0.5 攻击者和施加者各占一半", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                0,
+                100,
+                0,
+                true,
+                0.5f,
+                VulnerableFactors(2),
+                "ATTACK",
+                "攻击者：打击");
+
+            AssertEqual(83, players[0].Total.Damage, "factor=0.5 时攻击者份额错误");
+            AssertEqual(17, players[1].Total.Damage, "factor=0.5 时施加者份额错误");
+            AssertTotalsConserved(players, 0, 100, 0, "factor=0.5 分担");
+        });
+
+        Test("统计账本：factor=1 只转移可归因 debuff 部分", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                0,
+                175,
+                0,
+                true,
+                1f,
+                VulnerableFactors(2, 1.5d, 0.25d),
+                "ATTACK",
+                "攻击者：打击");
+
+            AssertEqual(125, players[0].Total.Damage, "Paper Phrog 条件增伤不应转移给施加者");
+            AssertEqual(50, players[1].Total.Damage, "factor=1 时施加者应只获得易伤基础贡献");
+            AssertTotalsConserved(players, 0, 175, 0, "可归因 debuff 部分");
+        });
+
+        Test("统计账本：多玩家 TotalDamage 总和不变", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                0,
+                100,
+                0,
+                true,
+                0.5f,
+                VulnerableFactors(2),
+                "ATTACK_1",
+                "攻击者一：打击");
+            ApplyAttack(
+                players,
+                1,
+                0,
+                200,
+                0,
+                true,
+                0.5f,
+                VulnerableFactors(1),
+                "ATTACK_2",
+                "攻击者二：重击");
+
+            AssertEqual(116, players[0].Total.Damage, "多玩家第一人总伤害错误");
+            AssertEqual(184, players[1].Total.Damage, "多玩家第二人总伤害错误");
+            AssertEqual(300, players.Sum(player => player.Total.Damage), "多玩家总伤害总和应保持不变");
+        });
+
+        Test("统计账本：多玩家 HitCount 总和不变", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                0,
+                100,
+                0,
+                true,
+                0.5f,
+                VulnerableFactors(2),
+                "ATTACK_1",
+                "攻击者一：打击");
+            ApplyAttack(
+                players,
+                1,
+                0,
+                200,
+                0,
+                true,
+                0.5f,
+                VulnerableFactors(1),
+                "ATTACK_2",
+                "攻击者二：重击");
+
+            AssertEqual(1, players[0].Total.Hits, "多玩家第一人的命中数错误");
+            AssertEqual(1, players[1].Total.Hits, "多玩家第二人的命中数错误");
+            AssertEqual(2, players.Sum(player => player.Total.Hits), "助攻转移不得改变命中数总和");
+        });
+
+        Test("统计账本：MaxHit 和 MaxHitSource 不因助攻变化", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                0,
+                100,
+                0,
+                true,
+                0.5f,
+                VulnerableFactors(2),
+                "MAIN_ATTACK",
+                "攻击者：打击");
+            AssertEqual(100, players[0].Total.MaxHit, "攻击者最高单击错误");
+            AssertTextEqual("攻击者：打击", players[0].Total.MaxHitSource, "攻击者最高单击来源错误");
+            AssertEqual(0, players[1].Total.MaxHit, "助攻转移不应形成施加者最高单击");
+            AssertTextEqual(
+                DpsStatsDamageLedger.UnknownSource,
+                players[1].Total.MaxHitSource,
+                "助攻转移不应改写施加者最高单击来源");
+
+            ApplyAttack(
+                players,
+                1,
+                0,
+                60,
+                0,
+                false,
+                0f,
+                Array.Empty<DebuffFactor>(),
+                "OWN_ATTACK",
+                "施加者：匕首");
+            AssertEqual(100, players[0].Total.MaxHit, "后续助攻不应改写原攻击者最高单击");
+            AssertEqual(60, players[1].Total.MaxHit, "施加者自己的攻击应正常形成最高单击");
+            AssertTextEqual("施加者：匕首", players[1].Total.MaxHitSource, "施加者自己的最高单击来源错误");
+        });
+
+        Test("统计账本：玩家来源明细合计等于总伤害", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                40,
+                50,
+                10,
+                true,
+                0.5f,
+                VulnerableFactors(2),
+                "ATTACK",
+                "攻击者：打击");
+
+            AssertEqual(
+                players[0].Total.Damage,
+                players[0].Sources.Values.Sum(source => source.Damage),
+                "攻击者来源明细合计与总伤害不一致");
+            AssertEqual(
+                players[1].Total.Damage,
+                players[1].Sources.Values.Sum(source => source.Damage),
+                "施加者来源明细合计与总伤害不一致");
+        });
+
+        Test("统计账本：blocked、unblocked、overkill 分项守恒", () =>
+        {
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                40,
+                50,
+                10,
+                true,
+                0.5f,
+                VulnerableFactors(2),
+                "ATTACK",
+                "攻击者：打击");
+
+            AssertTotalsConserved(players, 40, 50, 10, "分项守恒");
+            AssertEqual(
+                40,
+                players.SelectMany(player => player.Sources.Values).Sum(source => source.BlockedDamage),
+                "来源明细 blocked 分量合计未守恒");
+            AssertEqual(
+                50,
+                players.SelectMany(player => player.Sources.Values).Sum(source => source.UnblockedDamage),
+                "来源明细 unblocked 分量合计未守恒");
+            AssertEqual(
+                10,
+                players.SelectMany(player => player.Sources.Values).Sum(source => source.OverkillDamage),
+                "来源明细 overkill 分量合计未守恒");
+        });
+
+        Test("统计账本：完全格挡、部分格挡、过量击杀、零伤害", () =>
+        {
+            var fullyBlocked = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                fullyBlocked,
+                0,
+                60,
+                0,
+                0,
+                true,
+                1f,
+                VulnerableFactors(2),
+                "FULL_BLOCK",
+                "攻击者：格挡测试");
+            AssertTotalsConserved(fullyBlocked, 60, 0, 0, "完全格挡");
+            AssertEqual(40, fullyBlocked[0].Total.Damage, "完全格挡时攻击者份额错误");
+
+            var partiallyBlocked = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                partiallyBlocked,
+                0,
+                40,
+                50,
+                10,
+                true,
+                0.5f,
+                VulnerableFactors(2),
+                "PARTIAL_BLOCK",
+                "攻击者：部分格挡");
+            AssertTotalsConserved(partiallyBlocked, 40, 50, 10, "部分格挡");
+            AssertEqual(83, partiallyBlocked[0].Total.Damage, "部分格挡时攻击者份额错误");
+
+            var overkill = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                overkill,
+                0,
+                0,
+                70,
+                130,
+                true,
+                1f,
+                VulnerableFactors(2),
+                "OVERKILL",
+                "攻击者：过量击杀");
+            AssertTotalsConserved(overkill, 0, 70, 130, "过量击杀");
+            AssertEqual(67, overkill[1].Total.Damage, "过量击杀时应转移完整可归因 debuff 部分");
+
+            var zeroDamage = new DpsStatsDamageLedger();
+            AssertTrue(
+                !zeroDamage.Add("ZERO", "零伤害", 0, 0, 0, true, 0),
+                "零伤害不应写入账本");
+            AssertEqual(0, zeroDamage.Total.Damage, "零伤害后总伤害应为零");
+            AssertEqual(0, zeroDamage.Total.Hits, "零伤害后命中数应为零");
+        });
+
+        Test("统计账本：灾厄击杀不产生助攻", () =>
+        {
+            AssertClose(
+                0d,
+                DpsStatsAccounting.ResolveAttributionFactor(false, 1f),
+                0d,
+                "禁止转移时配置权重必须失效");
+            var players = new[]
+            {
+                new DpsStatsDamageLedger(),
+                new DpsStatsDamageLedger()
+            };
+            ApplyAttack(
+                players,
+                0,
+                0,
+                100,
+                0,
+                false,
+                1f,
+                VulnerableFactors(2),
+                "DOOM_KILL",
+                "灾厄击杀");
+
+            AssertEqual(100, players[0].Total.Damage, "灾厄击杀应全部归攻击者");
+            AssertEqual(0, players[1].Total.Damage, "灾厄击杀不得产生助攻伤害");
+            AssertEqual(0, players[1].Total.Hits, "灾厄击杀助攻不得增加命中");
+        });
+
+        return $"纯计算与统计不变量通过：{passed} 项\n- {string.Join("\n- ", passedNames)}";
     }
 }
 '@
@@ -458,11 +956,12 @@ public static class DpsAttributionInvariantRunner
 [System.IO.File]::WriteAllText($runnerPath, $runnerSource, [System.Text.UTF8Encoding]::new($false))
 
 try {
-    Add-Type -Path @($mathSourcePath, $runnerPath)
+    Add-Type -Path @($mathSourcePath, $statsAccountingSourcePath, $runnerPath)
     Write-Output ([DpsAttributionInvariantRunner]::Run())
 }
 finally {
     Remove-Item -LiteralPath $runnerPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $statsAccountingSourcePath -Force -ErrorAction SilentlyContinue
 }
 
 function Assert-SourceMatches {
