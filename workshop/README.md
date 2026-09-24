@@ -14,6 +14,7 @@ Sts2 DPS Meter 是一款轻量化的《杀戮尖塔 2》战斗统计 Mod。它�
 - 支持“本场战斗 / 本回合 / 总计”三档统计范围。
 - 单人模式显示伤害来源；多人模式显示队伍汇总和玩家输出排行。
 - 多人排行使用富文本按职业颜色区分玩家，本机玩家带有“（你）”标识。
+- 多人模式可设置增伤 debuff 助攻权重（默认 `0`）：支持易伤、易伤强化、侧击、击倒和减速，按设置把额外伤害的一部分或全部分配给施加者；虚弱不在计算范围内，且不改变游戏实际伤害。
 - 默认仅启用核心伤害统计。承伤、格挡、能量使用，以及给队友能量、护盾、回血、抽牌等模块可在游戏内“设”面板独立开关。
 - 队友增益不计入伤害、DPS、DPT 或来源伤害排行。
 - Mod 界面会自动跟随游戏语言：简体中文环境显示中文，其他语言显示英文，无需单独安装英文版或手动切换。
@@ -42,6 +43,8 @@ Sts2 DPS Meter is a lightweight combat statistics mod for Slay the Spire 2. It l
 - Strength and similar damage bonuses remain attributed to the original attack source.
 
 The compact, semi-transparent HUD can be dragged, scaled, and locked. It supports three scopes: Current Combat, Current Turn, and Total. Single-player mode shows damage sources; multiplayer mode automatically switches to a team summary and player rankings, using rich text and class colors to distinguish players.
+
+Multiplayer also provides an increased-damage debuff assist weight (default `0`). Vulnerable, Vulnerable Amplification, Flanking, Knockdown, and Slow bonuses can be split between the attacker and the debuff applier according to the configured weight. Weak is excluded, and the setting changes attribution only, not actual game damage.
 
 Only core damage tracking is enabled by default. Damage taken, Block, Energy spent, and support metrics for allies (Energy, Block, Healing, and Cards Drawn given to allies) can be enabled independently from the in-game Settings panel. Ally support is not counted toward damage, DPS, DPT, or damage-source rankings.
 
