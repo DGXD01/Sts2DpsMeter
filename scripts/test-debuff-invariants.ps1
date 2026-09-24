@@ -103,6 +103,32 @@ public static class DpsAttributionInvariantRunner
                 1e-8,
                 $"{name}：可转移额外伤害错误");
         }
+        static DpsPlayerShareInput Share(ulong? playerId, decimal fraction)
+        {
+            return new DpsPlayerShareInput(playerId, fraction);
+        }
+
+        static DpsDebuffPowerInput Power(
+            DpsDebuffPowerKind kind,
+            double amount,
+            bool isDealerApplied,
+            params DpsPlayerShareInput[] shares)
+        {
+            return new DpsDebuffPowerInput(kind, amount, isDealerApplied, shares);
+        }
+
+        static DpsDebuffResolutionInput Resolution(
+            double paperPhrogExtra,
+            double crueltyExtra,
+            params DpsDebuffPowerInput[] powers)
+        {
+            return new DpsDebuffResolutionInput(paperPhrogExtra, crueltyExtra, powers);
+        }
+
+        static long TransferredDamage(IReadOnlyList<DpsDebuffTransferAllocation> transfers)
+        {
+            return transfers.Sum(item => item.Components.Damage);
+        }
         Test("助攻资格矩阵", () =>
         {
             AssertTrue(DpsAttributionMath.ShouldResolveDebuffTransfer(0.5f, true, true, true, 10), "有效输入应允许计算");
@@ -224,6 +250,206 @@ public static class DpsAttributionInvariantRunner
             AssertEqual(original.Damage, negativeRemaining.Damage, "负数失败时必须保留原分配");
         });
 
+        Test("易伤正例、倍率排除与多玩家份额", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(
+                        DpsDebuffPowerKind.Vulnerable,
+                        1.5d,
+                        false,
+                        Share(1, 0.4m),
+                        Share(2, 0.6m))));
+            AssertEqual(1, factors.Count, "易伤应生成一个可转移因子");
+            AssertClose(1.5d, (double)factors[0].Multiplier, 1e-10, "易伤倍率错误");
+            AssertClose(1d, factors[0].TransferableFraction, 1e-10, "纯易伤应全部可转移");
+
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(100, 0, 0, 1, 0.5f, factors);
+            AssertEqual(1, transfers.Count, "攻击者份额不应生成转移，仅队友份额应转移");
+            AssertEqual(2, (long)transfers[0].PlayerId, "转移应归属非攻击者份额玩家");
+            AssertEqual(10, TransferredDamage(transfers), "易伤按份额和权重转移错误");
+
+            var excluded = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Vulnerable, 1d, false, Share(2, 1m))));
+            AssertEqual(0, excluded.Count, "倍率不超过 1 的易伤必须排除");
+        });
+
+        Test("易伤：Paper Phrog 条件增伤不转移", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0.25d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Vulnerable, 1.5d, false, Share(2, 1m))));
+            AssertEqual(1, factors.Count, "Paper Phrog 场景应生成易伤因子");
+            AssertClose(2d / 3d, factors[0].TransferableFraction, 1e-10, "Paper Phrog 增伤不应进入可转移份额");
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(175, 0, 0, 1, 1f, factors);
+            AssertEqual(50, TransferredDamage(transfers), "Paper Phrog 场景只应转移易伤基础部分");
+        });
+
+        Test("易伤：Cruelty 条件增伤不转移", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0.5d,
+                    Power(DpsDebuffPowerKind.Vulnerable, 1.5d, false, Share(2, 1m))));
+            AssertEqual(1, factors.Count, "Cruelty 场景应生成易伤因子");
+            AssertClose(0.5d, factors[0].TransferableFraction, 1e-10, "Cruelty 增伤不应进入可转移份额");
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(200, 0, 0, 1, 1f, factors);
+            AssertEqual(50, TransferredDamage(transfers), "Cruelty 场景只应转移易伤基础部分");
+        });
+
+        Test("易伤强化正例与无易伤排除例", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Vulnerable, 1.5d, false, Share(2, 1m)),
+                    Power(DpsDebuffPowerKind.Debilitate, 1d, false, Share(3, 1m))));
+            AssertEqual(1, factors.Count, "易伤和易伤强化应共享一个复合因子");
+            AssertClose(2d, (double)factors[0].Multiplier, 1e-10, "易伤强化倍率错误");
+            AssertEqual(2, factors[0].Components.Count, "复合因子应包含易伤和易伤强化两个分量");
+            AssertClose(0.5d, factors[0].Components[0].Weight, 1e-10, "易伤分量权重错误");
+            AssertClose(0.5d, factors[0].Components[1].Weight, 1e-10, "易伤强化分量权重错误");
+
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(200, 0, 0, 1, 1f, factors);
+            AssertEqual(2, transfers.Count, "易伤与易伤强化应生成两条来源转移");
+            AssertEqual(50, (long)transfers.Single(item => item.InternalId == "ASSIST_VULNERABLE_POWER").Components.Damage, "易伤分量转移错误");
+            AssertEqual(50, (long)transfers.Single(item => item.InternalId == "ASSIST_DEBILITATE_VULNERABLE").Components.Damage, "易伤强化分量转移错误");
+
+            var excluded = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Debilitate, 1d, false, Share(3, 1m))));
+            AssertEqual(0, excluded.Count, "没有易伤时易伤强化不得生成因子");
+        });
+
+        Test("侧击正例与攻击者自施加排除例", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Flanking, 2d, false, Share(2, 1m))));
+            AssertEqual(1, factors.Count, "非攻击者侧击应生成因子");
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(100, 0, 0, 1, 1f, factors);
+            AssertEqual(50, TransferredDamage(transfers), "侧击转移错误");
+
+            var selfFactors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Flanking, 2d, true, Share(1, 1m))));
+            AssertEqual(0, selfFactors.Count, "攻击者自己施加的侧击必须排除");
+        });
+
+        Test("击倒正例与攻击者自施加排除例", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Knockdown, 2d, false, Share(2, 1m))));
+            AssertEqual(1, factors.Count, "非攻击者击倒应生成因子");
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(100, 0, 0, 1, 1f, factors);
+            AssertEqual(50, TransferredDamage(transfers), "击倒转移错误");
+
+            var selfFactors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Knockdown, 2d, true, Share(1, 1m))));
+            AssertEqual(0, selfFactors.Count, "攻击者自己施加的击倒必须排除");
+        });
+
+        Test("减速正例与零层排除例", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Slow, 5d, false, Share(2, 1m))));
+            AssertEqual(1, factors.Count, "正层数减速应生成因子");
+            AssertClose(1.5d, (double)factors[0].Multiplier, 1e-10, "减速倍率换算错误");
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(100, 0, 0, 1, 1f, factors);
+            AssertEqual(33, TransferredDamage(transfers), "减速转移取整错误");
+
+            var zeroFactors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Slow, 0d, false, Share(2, 1m))));
+            AssertEqual(0, zeroFactors.Count, "零层减速必须排除");
+        });
+
+        Test("虚弱明确排除", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Weak, 10d, false, Share(2, 1m))));
+            AssertEqual(0, factors.Count, "虚弱不得生成助攻伤害因子");
+            AssertEqual(0, DpsAttributionMath.CalculateDebuffTransfers(100, 0, 0, 1, 1f, factors).Count, "虚弱不得生成转移");
+        });
+
+        Test("多 debuff 同时存在", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Vulnerable, 1.5d, false, Share(2, 1m)),
+                    Power(DpsDebuffPowerKind.Flanking, 1.5d, false, Share(2, 1m))));
+            AssertEqual(2, factors.Count, "多 debuff 应分别保留因子");
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(225, 0, 0, 1, 1f, factors);
+            AssertEqual(2, transfers.Count, "多 debuff 应生成两条来源转移");
+            AssertEqual(125, TransferredDamage(transfers), "多 debuff 组合转移错误");
+        });
+
+        Test("多玩家份额、未识别施加者与取整守恒", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(
+                        DpsDebuffPowerKind.Vulnerable,
+                        1.5d,
+                        false,
+                        Share(1, 0.2m),
+                        Share(2, 0.3m),
+                        Share(3, 0.3m),
+                        Share(null, 0.2m))));
+            var transfers = DpsAttributionMath.CalculateDebuffTransfers(100, 0, 0, 1, 1f, factors);
+            AssertEqual(2, transfers.Count, "攻击者和未识别施加者份额都不得生成转移");
+            AssertEqual(20, TransferredDamage(transfers), "多玩家份额转移错误");
+            AssertTrue(transfers.All(item => item.PlayerId != 1), "攻击者份额泄漏");
+            AssertTrue(transfers.All(item => item.PlayerId == 2 || item.PlayerId == 3), "未识别施加者份额泄漏");
+        });
+
+        Test("factor=0 排除与 factor 权重线性", () =>
+        {
+            var factors = DpsAttributionMath.ResolveDebuffFactors(
+                Resolution(
+                    0d,
+                    0d,
+                    Power(DpsDebuffPowerKind.Vulnerable, 1.5d, false, Share(2, 1m))));
+            AssertEqual(0, TransferredDamage(DpsAttributionMath.CalculateDebuffTransfers(400, 0, 0, 1, 0f, factors)), "factor=0 不应转移");
+            var half = DpsAttributionMath.CalculateDebuffTransfers(400, 0, 0, 1, 0.5f, factors);
+            var full = DpsAttributionMath.CalculateDebuffTransfers(400, 0, 0, 1, 1f, factors);
+            AssertEqual(67, TransferredDamage(half), "factor=0.5 转移取整错误");
+            AssertEqual(133, TransferredDamage(full), "factor=1 转移取整错误");
+            AssertTrue(TransferredDamage(full) > TransferredDamage(half), "factor 增大应提高转移量");
+        });
         return $"纯计算不变量通过：{passed} 项";
     }
 }
@@ -256,7 +482,7 @@ function Assert-SourceLocksVulnerableBreakdown {
         [Parameter(Mandatory = $true)][string]$Text
     )
 
-    if (-not [regex]::IsMatch($Text, 'DpsAttributionMath\.CalculateVulnerableBreakdown')) {
+    if (-not [regex]::IsMatch($Text, '\bCalculateVulnerableBreakdown\b')) {
         throw '易伤族倍率必须调用共享的 CalculateVulnerableBreakdown 纯计算函数。'
     }
 
@@ -264,6 +490,7 @@ function Assert-SourceLocksVulnerableBreakdown {
         throw '易伤族倍率仍在使用 debilitatedMultiplier/expandedMultiplier 内联公式。'
     }
 }
+$mathSource = Get-Content -LiteralPath $mathSourcePath -Raw
 $statsSource = Get-Content -LiteralPath $statsSourcePath -Raw
 $debuffSource = Get-Content -LiteralPath $debuffSourcePath -Raw
 $settingsSource = Get-Content -LiteralPath $settingsSourcePath -Raw
@@ -286,11 +513,18 @@ if (-not $doomKillMatch.Success) {
 Assert-SourceMatches $doomKillMatch.Value 'allowDebuffTransfer:\s*false' '灾厄击杀必须排除助攻转移。'
 
 Assert-SourceMatches $debuffSource 'DpsAttributionMath\.ShouldResolveDebuffTransfer' '助攻资格应调用共享纯计算函数。'
-Assert-SourceMatches $debuffSource 'DpsAttributionMath\.CalculateExtraDamage' '额外伤害应调用共享纯计算函数。'
-Assert-SourceMatches $debuffSource 'DpsAttributionMath\.ClampTransferTotal' '转移总量应调用共享纯计算函数。'
-Assert-SourceMatches $debuffSource 'DpsAttributionMath\.AllocateComponents' '三分量分配应调用共享纯计算函数。'
-Assert-SourceMatches $debuffSource 'DpsAttributionMath\.AllocateByWeights' '来源权重分配应调用共享纯计算函数。'
-Assert-SourceLocksVulnerableBreakdown $debuffSource
+Assert-SourceMatches $debuffSource 'DpsAttributionMath\.ResolveDebuffFactors' '适配层应调用 ResolveDebuffFactors 纯计算入口。'
+Assert-SourceMatches $debuffSource 'DpsAttributionMath\.CalculateDebuffTransfers' '适配层应调用 CalculateDebuffTransfers 纯计算入口。'
+if ([regex]::IsMatch($debuffSource, '\b(?:CalculateVulnerableBreakdown|CalculateExtraDamage|ClampTransferTotal|AllocateComponents|AllocateByWeights)\b')) {
+    throw '游戏对象适配层仍包含倍率或分配内联计算。'
+}
+if ([regex]::IsMatch($debuffSource, 'private sealed record DebuffFactor(?:Component)?\(')) {
+    throw '游戏对象适配层仍保留重复的 DebuffFactor 类型。'
+}
+Assert-SourceMatches $mathSource 'public static IReadOnlyList<DebuffFactor> ResolveDebuffFactors' '纯计算层必须提供 ResolveDebuffFactors。'
+Assert-SourceMatches $mathSource 'public static IReadOnlyList<DpsDebuffTransferAllocation> CalculateDebuffTransfers' '纯计算层必须提供 CalculateDebuffTransfers。'
+Assert-SourceMatches $mathSource 'private static void AddSingleFactor' '纯计算层必须集中处理单 debuff 因子。'
+Assert-SourceLocksVulnerableBreakdown $mathSource
 Assert-SourceMatches $statsSource 'DpsAttributionMath\.TrySubtractComponents' '转移扣减应调用共享纯计算函数。'
 
 Assert-SourceMatches $settingsSource 'MinDebuffDamageAttributionFactor\s*=\s*0f' '最小助攻权重必须为 0。'

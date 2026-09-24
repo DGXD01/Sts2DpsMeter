@@ -194,6 +194,276 @@ internal static class DpsAttributionMath
         return true;
     }
 
+    public static IReadOnlyList<DebuffFactor> ResolveDebuffFactors(
+        DpsDebuffResolutionInput input)
+    {
+        var factors = new List<DebuffFactor>();
+        var vulnerable = input.Powers.FirstOrDefault(
+            power => power.Kind == DpsDebuffPowerKind.Vulnerable);
+        var debilitate = input.Powers.FirstOrDefault(
+            power => power.Kind == DpsDebuffPowerKind.Debilitate);
+        if (vulnerable is not null)
+        {
+            var breakdown = CalculateVulnerableBreakdown(
+                1,
+                vulnerable.Amount,
+                input.PaperPhrogExtra,
+                input.CrueltyExtra,
+                debilitate is not null);
+            if (breakdown.TotalExtraDamage > 0d)
+            {
+                var components = new List<DebuffFactorComponent>
+                {
+                    new(
+                        "ASSIST_VULNERABLE_POWER",
+                        "助攻：易伤",
+                        vulnerable.Shares,
+                        breakdown.VulnerableExtraDamage)
+                };
+                if (debilitate is not null && breakdown.DebilitateExtraDamage > 0d)
+                {
+                    components.Add(new DebuffFactorComponent(
+                        "ASSIST_DEBILITATE_VULNERABLE",
+                        "助攻：易伤强化",
+                        debilitate.Shares,
+                        breakdown.DebilitateExtraDamage));
+                }
+
+                if (double.IsFinite(breakdown.FinalMultiplier)
+                    && breakdown.FinalMultiplier <= (double)decimal.MaxValue)
+                {
+                    factors.Add(new DebuffFactor(
+                        (decimal)breakdown.FinalMultiplier,
+                        breakdown.TransferableExtraDamage / breakdown.TotalExtraDamage,
+                        components));
+                }
+            }
+        }
+
+        foreach (var power in input.Powers)
+        {
+            switch (power.Kind)
+            {
+                case DpsDebuffPowerKind.Flanking:
+                    AddSingleFactor(
+                        factors,
+                        power,
+                        power.Amount,
+                        "ASSIST_FLANKING_POWER",
+                        "助攻：侧击");
+                    break;
+                case DpsDebuffPowerKind.Knockdown:
+                    AddSingleFactor(
+                        factors,
+                        power,
+                        power.Amount,
+                        "ASSIST_KNOCKDOWN_POWER",
+                        "助攻：击倒");
+                    break;
+                case DpsDebuffPowerKind.Slow:
+                    AddSingleFactor(
+                        factors,
+                        power,
+                        1d + 0.1d * power.Amount,
+                        "ASSIST_SLOW_POWER",
+                        "助攻：减速");
+                    break;
+                case DpsDebuffPowerKind.Weak:
+                case DpsDebuffPowerKind.Vulnerable:
+                case DpsDebuffPowerKind.Debilitate:
+                    break;
+            }
+        }
+
+        return factors;
+    }
+
+    private static void AddSingleFactor(
+        List<DebuffFactor> factors,
+        DpsDebuffPowerInput power,
+        double multiplier,
+        string internalId,
+        string displayName)
+    {
+        if (power.IsDealerApplied
+            || !double.IsFinite(multiplier)
+            || multiplier <= 1d
+            || multiplier > (double)decimal.MaxValue)
+        {
+            return;
+        }
+
+        factors.Add(new DebuffFactor(
+            (decimal)multiplier,
+            1d,
+            new[]
+            {
+                new DebuffFactorComponent(internalId, displayName, power.Shares, 1d)
+            }));
+    }
+
+    public static IReadOnlyList<DpsDebuffTransferAllocation> CalculateDebuffTransfers(
+        long blockedDamage,
+        long unblockedDamage,
+        long overkillDamage,
+        ulong dealerPlayerId,
+        float factor,
+        IReadOnlyList<DebuffFactor> factors)
+    {
+        var totalDamage = blockedDamage + unblockedDamage + overkillDamage;
+        if (totalDamage <= 0 || factors.Count == 0)
+        {
+            return Array.Empty<DpsDebuffTransferAllocation>();
+        }
+
+        var factorWeight = NormalizeFactor(factor);
+        if (factorWeight <= 0d)
+        {
+            return Array.Empty<DpsDebuffTransferAllocation>();
+        }
+
+        var multiplierProduct = 1d;
+        foreach (var debuffFactor in factors)
+        {
+            var multiplier = (double)debuffFactor.Multiplier;
+            if (multiplier > 1d)
+            {
+                multiplierProduct *= multiplier;
+            }
+        }
+
+        if (!double.IsFinite(multiplierProduct) || multiplierProduct <= 1d)
+        {
+            return Array.Empty<DpsDebuffTransferAllocation>();
+        }
+
+        var extraDamage = CalculateExtraDamage(totalDamage, multiplierProduct);
+        if (extraDamage <= 0d)
+        {
+            return Array.Empty<DpsDebuffTransferAllocation>();
+        }
+
+        var logProduct = Math.Log(multiplierProduct);
+        if (logProduct <= 0d)
+        {
+            return Array.Empty<DpsDebuffTransferAllocation>();
+        }
+
+        var rawTransfers = new List<RawDebuffTransfer>();
+        foreach (var debuffFactor in factors)
+        {
+            var multiplier = (double)debuffFactor.Multiplier;
+            if (multiplier <= 1d)
+            {
+                continue;
+            }
+
+            var logContribution = Math.Log(multiplier) / logProduct;
+            if (logContribution <= 0d)
+            {
+                continue;
+            }
+
+            var factorContribution = extraDamage
+                * logContribution
+                * factorWeight
+                * debuffFactor.TransferableFraction;
+            if (factorContribution <= 0d)
+            {
+                continue;
+            }
+
+            var componentWeightTotal = debuffFactor.Components.Sum(
+                component => Math.Max(component.Weight, 0d));
+            if (componentWeightTotal <= 0d)
+            {
+                continue;
+            }
+
+            foreach (var component in debuffFactor.Components)
+            {
+                var componentContribution = factorContribution
+                    * Math.Max(component.Weight, 0d)
+                    / componentWeightTotal;
+                if (componentContribution <= 0d)
+                {
+                    continue;
+                }
+
+                foreach (var share in component.Shares)
+                {
+                    if (share.PlayerId is not ulong playerId
+                        || share.Fraction <= 0m
+                        || playerId == dealerPlayerId)
+                    {
+                        continue;
+                    }
+
+                    var amount = componentContribution * (double)share.Fraction;
+                    if (amount <= 0d)
+                    {
+                        continue;
+                    }
+
+                    rawTransfers.Add(new RawDebuffTransfer(
+                        playerId,
+                        component.InternalId,
+                        component.DisplayName,
+                        amount));
+                }
+            }
+        }
+
+        if (rawTransfers.Count == 0)
+        {
+            return Array.Empty<DpsDebuffTransferAllocation>();
+        }
+
+        var roundedTotal = ClampTransferTotal(
+            totalDamage,
+            rawTransfers.Sum(item => item.Amount));
+        if (roundedTotal <= 0)
+        {
+            return Array.Empty<DpsDebuffTransferAllocation>();
+        }
+
+        var rawWeights = rawTransfers.Select(item => item.Amount).ToArray();
+        var componentTotals = AllocateComponents(
+            roundedTotal,
+            blockedDamage,
+            unblockedDamage,
+            overkillDamage);
+        var blockedAmounts = AllocateByWeights(componentTotals.BlockedDamage, rawWeights);
+        var unblockedAmounts = AllocateByWeights(componentTotals.UnblockedDamage, rawWeights);
+        var overkillAmounts = AllocateByWeights(componentTotals.OverkillDamage, rawWeights);
+
+        var transfers = new List<DpsDebuffTransferAllocation>();
+        for (var index = 0; index < rawTransfers.Count; index++)
+        {
+            var components = new DamageComponents(
+                blockedAmounts[index],
+                unblockedAmounts[index],
+                overkillAmounts[index]);
+            if (components.Damage <= 0)
+            {
+                continue;
+            }
+
+            var rawTransfer = rawTransfers[index];
+            transfers.Add(new DpsDebuffTransferAllocation(
+                rawTransfer.PlayerId,
+                rawTransfer.InternalId,
+                rawTransfer.DisplayName,
+                components));
+        }
+
+        return transfers;
+    }
+    private sealed record RawDebuffTransfer(
+        ulong PlayerId,
+        string InternalId,
+        string DisplayName,
+        double Amount);
     private static long RoundPositive(double value)
     {
         if (value <= 0d)
@@ -228,3 +498,45 @@ internal readonly record struct DamageComponents(
 {
     public long Damage => BlockedDamage + UnblockedDamage + OverkillDamage;
 }
+
+internal enum DpsDebuffPowerKind
+{
+    Vulnerable,
+    Debilitate,
+    Flanking,
+    Knockdown,
+    Slow,
+    Weak
+}
+
+internal sealed record DpsPlayerShareInput(
+    ulong? PlayerId,
+    decimal Fraction);
+
+internal sealed record DpsDebuffPowerInput(
+    DpsDebuffPowerKind Kind,
+    double Amount,
+    bool IsDealerApplied,
+    IReadOnlyList<DpsPlayerShareInput> Shares);
+
+internal sealed record DpsDebuffResolutionInput(
+    double PaperPhrogExtra,
+    double CrueltyExtra,
+    IReadOnlyList<DpsDebuffPowerInput> Powers);
+
+internal sealed record DebuffFactor(
+    decimal Multiplier,
+    double TransferableFraction,
+    IReadOnlyList<DebuffFactorComponent> Components);
+
+internal sealed record DebuffFactorComponent(
+    string InternalId,
+    string DisplayName,
+    IReadOnlyList<DpsPlayerShareInput> Shares,
+    double Weight);
+
+internal sealed record DpsDebuffTransferAllocation(
+    ulong PlayerId,
+    string InternalId,
+    string DisplayName,
+    DamageComponents Components);
