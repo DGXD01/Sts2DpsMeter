@@ -33,7 +33,12 @@ internal static class DpsLocalization
         ["不可格挡"] = "Unblockable",
         ["未知职业"] = "Unknown Class",
         ["敌方伤害"] = "Enemy Damage",
-        ["自损"] = "Self"
+        ["自损"] = "Self",
+        ["助攻：易伤"] = "Assist: Vulnerable",
+        ["助攻：侧击"] = "Assist: Flanking",
+        ["助攻：击倒"] = "Assist: Knockdown",
+        ["助攻：减速"] = "Assist: Slow",
+        ["助攻：易伤强化"] = "Assist: Vulnerable Amplification"
     };
 
     private static LocManager? _subscribedManager;

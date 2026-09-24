@@ -883,7 +883,7 @@ public static class DpsAttribution
         return false;
     }
 
-    private static IReadOnlyList<PlayerDamageShare> GetPowerSharesWithFallback(PowerModel power)
+    internal static IReadOnlyList<PlayerDamageShare> GetPowerSharesWithFallback(PowerModel power)
     {
         if (TryGetPowerShares(power, out var shares))
         {
