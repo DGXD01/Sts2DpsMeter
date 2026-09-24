@@ -32,6 +32,40 @@ internal static class DpsAttributionMath
         return extraDamage > 0d ? extraDamage : 0d;
     }
 
+    public static VulnerableDamageBreakdown CalculateVulnerableBreakdown(
+        long baseDamage,
+        double vulnerableMultiplier,
+        double paperPhrogExtra,
+        double crueltyExtra,
+        bool hasDebilitate)
+    {
+        if (baseDamage <= 0
+            || !double.IsFinite(vulnerableMultiplier)
+            || vulnerableMultiplier <= 1d
+            || !double.IsFinite(paperPhrogExtra)
+            || !double.IsFinite(crueltyExtra))
+        {
+            return default;
+        }
+
+        var vulnerableExtra = vulnerableMultiplier - 1d;
+        var attackerExtra = Math.Max(paperPhrogExtra, 0d) + Math.Max(crueltyExtra, 0d);
+        var debilitateFactor = hasDebilitate ? 2d : 1d;
+        var finalMultiplier = 1d + debilitateFactor * (vulnerableExtra + attackerExtra);
+        if (!double.IsFinite(finalMultiplier) || finalMultiplier <= 1d)
+        {
+            return default;
+        }
+
+        var vulnerableDamage = baseDamage * vulnerableExtra;
+        var debilitateDamage = hasDebilitate ? vulnerableDamage : 0d;
+        var attackerDamage = baseDamage * debilitateFactor * attackerExtra;
+        return new VulnerableDamageBreakdown(
+            finalMultiplier,
+            vulnerableDamage,
+            debilitateDamage,
+            attackerDamage);
+    }
     public static double NormalizeFactor(float factor)
     {
         if (float.IsNaN(factor))
@@ -174,6 +208,17 @@ internal static class DpsAttributionMath
 
         return (long)Math.Floor(value + 0.5d);
     }
+}
+
+internal readonly record struct VulnerableDamageBreakdown(
+    double FinalMultiplier,
+    double VulnerableExtraDamage,
+    double DebilitateExtraDamage,
+    double AttackerConditionalExtraDamage)
+{
+    public double TransferableExtraDamage => VulnerableExtraDamage + DebilitateExtraDamage;
+
+    public double TotalExtraDamage => TransferableExtraDamage + AttackerConditionalExtraDamage;
 }
 
 internal readonly record struct DamageComponents(

@@ -75,6 +75,34 @@ public static class DpsAttributionInvariantRunner
             }
         }
 
+        static void AssertVulnerableCase(
+            string name,
+            long baseDamage,
+            double vulnerableMultiplier,
+            double paperPhrogExtra,
+            double crueltyExtra,
+            bool hasDebilitate,
+            double expectedMultiplier,
+            double expectedVulnerableDamage,
+            double expectedDebilitateDamage,
+            double expectedAttackerDamage)
+        {
+            var result = DpsAttributionMath.CalculateVulnerableBreakdown(
+                baseDamage,
+                vulnerableMultiplier,
+                paperPhrogExtra,
+                crueltyExtra,
+                hasDebilitate);
+            AssertClose(expectedMultiplier, result.FinalMultiplier, 1e-10, $"{name}：最终倍率错误");
+            AssertClose(expectedVulnerableDamage, result.VulnerableExtraDamage, 1e-8, $"{name}：易伤基础贡献错误");
+            AssertClose(expectedDebilitateDamage, result.DebilitateExtraDamage, 1e-8, $"{name}：易伤强化贡献错误");
+            AssertClose(expectedAttackerDamage, result.AttackerConditionalExtraDamage, 1e-8, $"{name}：攻击者条件增伤错误");
+            AssertClose(
+                expectedVulnerableDamage + expectedDebilitateDamage,
+                result.TransferableExtraDamage,
+                1e-8,
+                $"{name}：可转移额外伤害错误");
+        }
         Test("助攻资格矩阵", () =>
         {
             AssertTrue(DpsAttributionMath.ShouldResolveDebuffTransfer(0.5f, true, true, true, 10), "有效输入应允许计算");
@@ -106,6 +134,15 @@ public static class DpsAttributionInvariantRunner
             AssertClose(0d, DpsAttributionMath.CalculateExtraDamage(100, double.NaN), 0d, "NaN 倍率应拒绝");
         });
 
+        Test("易伤族倍率口径冻结", () =>
+        {
+            AssertVulnerableCase("只有易伤", 100, 1.5d, 0d, 0d, false, 1.5d, 50d, 0d, 0d);
+            AssertVulnerableCase("易伤+PaperPhrog", 100, 1.5d, 0.25d, 0d, false, 1.75d, 50d, 0d, 25d);
+            AssertVulnerableCase("易伤+Cruelty20", 100, 1.5d, 0d, 0.2d, false, 1.7d, 50d, 0d, 20d);
+            AssertVulnerableCase("易伤+Debilitate", 100, 1.5d, 0d, 0d, true, 2d, 50d, 50d, 0d);
+            AssertVulnerableCase("易伤+PaperPhrog+Debilitate", 100, 1.5d, 0.25d, 0d, true, 2.5d, 50d, 50d, 50d);
+            AssertVulnerableCase("易伤+Cruelty20+Debilitate", 100, 1.5d, 0d, 0.2d, true, 2.4d, 50d, 50d, 40d);
+        });
         Test("转移总量取整与封顶", () =>
         {
             AssertEqual(49, DpsAttributionMath.ClampTransferTotal(100, 49.49d), "向下取整错误");
@@ -211,6 +248,19 @@ function Assert-SourceMatches {
     }
 }
 
+function Assert-SourceLocksVulnerableBreakdown {
+    param(
+        [Parameter(Mandatory = $true)][string]$Text
+    )
+
+    if (-not [regex]::IsMatch($Text, 'DpsAttributionMath\.CalculateVulnerableBreakdown')) {
+        throw '易伤族倍率必须调用共享的 CalculateVulnerableBreakdown 纯计算函数。'
+    }
+
+    if ([regex]::IsMatch($Text, '\b(?:debilitatedMultiplier|expandedMultiplier)\b')) {
+        throw '易伤族倍率仍在使用 debilitatedMultiplier/expandedMultiplier 内联公式。'
+    }
+}
 $statsSource = Get-Content -LiteralPath $statsSourcePath -Raw
 $debuffSource = Get-Content -LiteralPath $debuffSourcePath -Raw
 $settingsSource = Get-Content -LiteralPath $settingsSourcePath -Raw
@@ -237,10 +287,11 @@ Assert-SourceMatches $debuffSource 'DpsAttributionMath\.CalculateExtraDamage' '�
 Assert-SourceMatches $debuffSource 'DpsAttributionMath\.ClampTransferTotal' '转移总量应调用共享纯计算函数。'
 Assert-SourceMatches $debuffSource 'DpsAttributionMath\.AllocateComponents' '三分量分配应调用共享纯计算函数。'
 Assert-SourceMatches $debuffSource 'DpsAttributionMath\.AllocateByWeights' '来源权重分配应调用共享纯计算函数。'
+Assert-SourceLocksVulnerableBreakdown $debuffSource
 Assert-SourceMatches $statsSource 'DpsAttributionMath\.TrySubtractComponents' '转移扣减应调用共享纯计算函数。'
 
 Assert-SourceMatches $settingsSource 'MinDebuffDamageAttributionFactor\s*=\s*0f' '最小助攻权重必须为 0。'
 Assert-SourceMatches $settingsSource 'MaxDebuffDamageAttributionFactor\s*=\s*1f' '最大助攻权重必须为 1。'
 Assert-SourceMatches $settingsSource 'DebuffDamageAttributionFactorStep\s*=\s*0\.05f' '助攻权重步长必须为 0.05。'
 
-Write-Output '分支与常量静态不变量通过：12 项'
+Write-Output '分支与常量静态不变量通过：13 项'
