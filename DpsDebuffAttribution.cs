@@ -25,16 +25,17 @@ internal static class DpsDebuffAttribution
         float factor)
     {
         var totalDamage = blockedDamage + unblockedDamage + overkillDamage;
-        if (factor <= 0f
-            || dealer is null
-            || !target.IsEnemy
-            || !props.IsPoweredAttack()
-            || totalDamage <= 0)
+        if (!DpsAttributionMath.ShouldResolveDebuffTransfer(
+                factor,
+                dealer is not null,
+                target.IsEnemy,
+                props.IsPoweredAttack(),
+                totalDamage))
         {
             return Array.Empty<DebuffDamageTransfer>();
         }
 
-        var factors = ResolveFactors(dealer, target, props);
+        var factors = ResolveFactors(dealer!, target, props);
         if (factors.Count == 0)
         {
             return Array.Empty<DebuffDamageTransfer>();
@@ -55,7 +56,7 @@ internal static class DpsDebuffAttribution
             return Array.Empty<DebuffDamageTransfer>();
         }
 
-        var extraDamage = totalDamage - totalDamage / multiplierProduct;
+        var extraDamage = DpsAttributionMath.CalculateExtraDamage(totalDamage, multiplierProduct);
         if (extraDamage <= 0d)
         {
             return Array.Empty<DebuffDamageTransfer>();
@@ -67,7 +68,7 @@ internal static class DpsDebuffAttribution
             return Array.Empty<DebuffDamageTransfer>();
         }
 
-        var factorWeight = Math.Clamp((double)factor, 0d, 1d);
+        var factorWeight = DpsAttributionMath.NormalizeFactor(factor);
         var rawTransfers = new List<RawDebuffTransfer>();
         foreach (var debuffFactor in factors)
         {
@@ -112,21 +113,23 @@ internal static class DpsDebuffAttribution
             return Array.Empty<DebuffDamageTransfer>();
         }
 
-        var roundedTotal = Math.Min(totalDamage, RoundPositive(rawTransfers.Sum(item => item.Amount)));
+        var roundedTotal = DpsAttributionMath.ClampTransferTotal(
+            totalDamage,
+            rawTransfers.Sum(item => item.Amount));
         if (roundedTotal <= 0)
         {
             return Array.Empty<DebuffDamageTransfer>();
         }
 
         var rawWeights = rawTransfers.Select(item => item.Amount).ToArray();
-        var componentTotals = AllocateComponents(
+        var componentTotals = DpsAttributionMath.AllocateComponents(
             roundedTotal,
             blockedDamage,
             unblockedDamage,
             overkillDamage);
-        var blockedAmounts = AllocateByWeights(componentTotals.BlockedDamage, rawWeights);
-        var unblockedAmounts = AllocateByWeights(componentTotals.UnblockedDamage, rawWeights);
-        var overkillAmounts = AllocateByWeights(componentTotals.OverkillDamage, rawWeights);
+        var blockedAmounts = DpsAttributionMath.AllocateByWeights(componentTotals.BlockedDamage, rawWeights);
+        var unblockedAmounts = DpsAttributionMath.AllocateByWeights(componentTotals.UnblockedDamage, rawWeights);
+        var overkillAmounts = DpsAttributionMath.AllocateByWeights(componentTotals.OverkillDamage, rawWeights);
 
         var transfers = new List<DebuffDamageTransfer>();
         for (var index = 0; index < rawTransfers.Count; index++)
@@ -262,87 +265,6 @@ internal static class DpsDebuffAttribution
             player);
     }
 
-    private static DamageComponents AllocateComponents(
-        long total,
-        long blockedDamage,
-        long unblockedDamage,
-        long overkillDamage)
-    {
-        var weights = new[]
-        {
-            (double)blockedDamage,
-            (double)unblockedDamage,
-            (double)overkillDamage
-        };
-        var allocated = AllocateByWeights(total, weights);
-        return new DamageComponents(allocated[0], allocated[1], allocated[2]);
-    }
-
-    private static long[] AllocateByWeights(
-        long total,
-        IReadOnlyList<double> weights)
-    {
-        var result = new long[weights.Count];
-        if (total <= 0 || weights.Count == 0)
-        {
-            return result;
-        }
-
-        var weightTotal = weights.Sum(weight => weight > 0d ? weight : 0d);
-        if (weightTotal <= 0d)
-        {
-            return result;
-        }
-
-        var remainders = new List<(int Index, double Remainder)>(weights.Count);
-        long assigned = 0;
-        for (var index = 0; index < weights.Count; index++)
-        {
-            var weight = weights[index] > 0d ? weights[index] : 0d;
-            var raw = total * weight / weightTotal;
-            var floor = (long)Math.Floor(raw);
-            result[index] = floor;
-            assigned += floor;
-            remainders.Add((index, raw - floor));
-        }
-
-        var residual = total - assigned;
-        if (residual <= 0)
-        {
-            return result;
-        }
-
-        foreach (var item in remainders
-                     .OrderByDescending(item => item.Remainder)
-                     .ThenBy(item => item.Index))
-        {
-            if (residual <= 0)
-            {
-                break;
-            }
-
-            result[item.Index]++;
-            residual--;
-        }
-
-        return result;
-    }
-
-    private static long RoundPositive(double value)
-    {
-        if (value <= 0d)
-        {
-            return 0;
-        }
-
-        if (value >= long.MaxValue)
-        {
-            return long.MaxValue;
-        }
-
-        return (long)Math.Floor(value + 0.5d);
-    }
-
     private sealed record DebuffFactor(
         string InternalId,
         string DisplayName,
@@ -355,10 +277,6 @@ internal static class DpsDebuffAttribution
         string DisplayName,
         double Amount);
 
-    private readonly record struct DamageComponents(
-        long BlockedDamage,
-        long UnblockedDamage,
-        long OverkillDamage);
 }
 
 internal sealed record DebuffDamageTransfer(

@@ -547,33 +547,29 @@ public static class DpsStats
         IReadOnlyList<DebuffDamageTransfer> transfers,
         out DamageAllocation remaining)
     {
-        var blockedDamage = allocation.BlockedDamage;
-        var unblockedDamage = allocation.UnblockedDamage;
-        var overkillDamage = allocation.OverkillDamage;
-
-        foreach (var transfer in transfers)
+        var transferComponents = transfers
+            .Select(transfer => new DamageComponents(
+                transfer.BlockedDamage,
+                transfer.UnblockedDamage,
+                transfer.OverkillDamage))
+            .ToArray();
+        if (!DpsAttributionMath.TrySubtractComponents(
+                new DamageComponents(
+                    allocation.BlockedDamage,
+                    allocation.UnblockedDamage,
+                    allocation.OverkillDamage),
+                transferComponents,
+                out var remainingComponents))
         {
-            if (transfer.BlockedDamage < 0
-                || transfer.UnblockedDamage < 0
-                || transfer.OverkillDamage < 0
-                || transfer.BlockedDamage > blockedDamage
-                || transfer.UnblockedDamage > unblockedDamage
-                || transfer.OverkillDamage > overkillDamage)
-            {
-                remaining = allocation;
-                return false;
-            }
-
-            blockedDamage -= transfer.BlockedDamage;
-            unblockedDamage -= transfer.UnblockedDamage;
-            overkillDamage -= transfer.OverkillDamage;
+            remaining = allocation;
+            return false;
         }
 
         remaining = new DamageAllocation(
             allocation.Player,
-            blockedDamage,
-            unblockedDamage,
-            overkillDamage);
+            remainingComponents.BlockedDamage,
+            remainingComponents.UnblockedDamage,
+            remainingComponents.OverkillDamage);
         return true;
     }
 
