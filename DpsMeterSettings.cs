@@ -8,7 +8,7 @@ namespace Sts2DpsMeter;
 
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 4;
+    public int SchemaVersion { get; set; } = 5;
     public bool StartVisible { get; set; } = true;
     public bool LockPosition { get; set; }
     public bool CompactMode { get; set; }
@@ -24,6 +24,7 @@ public sealed class DpsMeterSettingsData
     public int MaxRows { get; set; } = 5;
     public float PanelOpacity { get; set; } = 0.92f;
     public float UiScale { get; set; } = 1.0f;
+    public float DebuffDamageAttributionFactor { get; set; }
     public float PositionX { get; set; } = 18f;
     public float PositionY { get; set; } = 18f;
 }
@@ -33,8 +34,11 @@ public static class DpsMeterSettings
     public const float MinUiScale = 0.5f;
     public const float MaxUiScale = 2.0f;
     public const float UiScaleStep = 0.05f;
+    public const float MinDebuffDamageAttributionFactor = 0f;
+    public const float MaxDebuffDamageAttributionFactor = 1f;
+    public const float DebuffDamageAttributionFactorStep = 0.05f;
 
-    private const int CurrentSchemaVersion = 4;
+    private const int CurrentSchemaVersion = 5;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -165,6 +169,7 @@ public static class DpsMeterSettings
             MaxRows = source.MaxRows,
             PanelOpacity = source.PanelOpacity,
             UiScale = source.UiScale,
+            DebuffDamageAttributionFactor = source.DebuffDamageAttributionFactor,
             PositionX = source.PositionX,
             PositionY = source.PositionY
         };
@@ -177,6 +182,10 @@ public static class DpsMeterSettings
         settings.MaxRows = Math.Clamp(settings.MaxRows, 1, MaxRowsLimit);
         settings.PanelOpacity = Math.Clamp(settings.PanelOpacity, 0.35f, 1f);
         settings.UiScale = ClampUiScale(settings.UiScale);
+        settings.DebuffDamageAttributionFactor = Math.Clamp(
+            settings.DebuffDamageAttributionFactor,
+            MinDebuffDamageAttributionFactor,
+            MaxDebuffDamageAttributionFactor);
         settings.PositionX = Math.Max(0f, settings.PositionX);
         settings.PositionY = Math.Max(0f, settings.PositionY);
     }
