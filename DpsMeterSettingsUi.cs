@@ -219,6 +219,27 @@ public static class DpsMeterSettingsUi
         AddText(DpsLocalization.Get("队友增益仅在多人模式显示；单人模式下这些开关不会新增 HUD 模块。", "Ally support is shown only in multiplayer; these toggles do not add HUD modules in single-player."), MutedColor, 11);
         AddText(DpsLocalization.Get("可在下方勾选需要显示的模块；统计范围仅切换数据的时间维度，不改变模块开关。", "Select the modules to display below; scope changes only the time range, not the module toggles."), MutedColor, 11);
 
+        AddSection(DpsLocalization.Get("多人伤害归属", "Multiplayer Damage Attribution"));
+        AddSliderRow(
+            DpsLocalization.Get("增伤 debuff 助攻权重", "Increased-damage debuff assist weight"),
+            settings.DebuffDamageAttributionFactor,
+            DpsMeterSettings.MinDebuffDamageAttributionFactor,
+            DpsMeterSettings.MaxDebuffDamageAttributionFactor,
+            DpsMeterSettings.DebuffDamageAttributionFactorStep,
+            value =>
+        {
+            settings.DebuffDamageAttributionFactor = Math.Clamp(
+                (float)value,
+                DpsMeterSettings.MinDebuffDamageAttributionFactor,
+                DpsMeterSettings.MaxDebuffDamageAttributionFactor);
+        });
+        AddText(
+            DpsLocalization.Get(
+                "0 = 额外伤害归攻击者，1 = 额外伤害归 debuff 施加者，0.5 = 双方各占一半；虚弱不计入。",
+                "0 = extra damage goes to the attacker, 1 = extra damage goes to the debuff applier, 0.5 = split evenly; Weak is not included."),
+            MutedColor,
+            11);
+
         AddSection(DpsLocalization.Get("布局与密度", "Layout & Density"));
         AddSliderRow(DpsLocalization.Get("伤害来源显示行数", "Damage source rows"), settings.MaxRows, 1, 12, 1, value =>
         {
