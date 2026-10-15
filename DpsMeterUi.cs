@@ -82,10 +82,19 @@ public static partial class DpsMeterUi
                 root.AddChild(host);
                 host.SetProcess(true);
                 var refreshHost = new DpsMeterHost(DpsStats.Tick, RefreshNow);
-                void OnProcessFrame() => refreshHost.ProcessFrame(host.GetProcessDeltaTime());
+                void OnProcessFrame()
+                {
+                    var delta = host.GetProcessDeltaTime();
+                    refreshHost.ProcessFrame(delta);
+                    ProcessHeaderTooltip(delta);
+                }
                 // 本项目未使用 Godot 源码生成器，直接连接原生信号，避免依赖自定义 _Process 绑定。
                 tree!.ProcessFrame += OnProcessFrame;
-                host.TreeExiting += () => tree.ProcessFrame -= OnProcessFrame;
+                host.TreeExiting += () =>
+                {
+                    tree.ProcessFrame -= OnProcessFrame;
+                    HideHeaderTooltip();
+                };
             }
 
             if (!IsAlive(_canvas))
@@ -138,7 +147,7 @@ public static partial class DpsMeterUi
         var snapshot = DpsStats.GetSnapshot();
 
         _panel!.Visible = _visible;
-        if (!_visible) HeaderTooltip.Exit();
+        if (!_visible) HideHeaderTooltip();
         if (!_dragging && (_lastLayoutState is null ||
             settings.PositionX != _lastLayoutState.PositionX ||
             settings.PositionY != _lastLayoutState.PositionY))
@@ -161,7 +170,7 @@ public static partial class DpsMeterUi
         }
         var navigationChanged = UpdateNavigationState(snapshot.Players.Count);
 
-        SetHeaderTooltipText(HeaderTooltip.Update(view.Title));
+        HeaderTooltip.Update(view.Title);
         var language = DpsLocalization.LanguageCode;
         var contentChanged = !_contentCollapsed && UpdateDamageSections(settings, view, language);
         var layoutState = new PanelLayoutState(
@@ -951,6 +960,7 @@ public static partial class DpsMeterUi
         headerRow.AddChild(_previousPlayerButton);
 
         HeaderTooltip.Reset();
+        HeaderHover.Reset();
         _header = new Label
         {
             Text = L("伤害：0", "Damage: 0"),
@@ -959,15 +969,13 @@ public static partial class DpsMeterUi
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             ClipText = true,
             TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
-            // 接收原生悬停提示，同时将点击/拖动继续传给父面板。
+            // 保留标题的点击/拖动传播；全文浮层由 Host 每帧检测，不依赖原生 TooltipText。
             MouseFilter = Control.MouseFilterEnum.Pass
         };
         _header.AddThemeColorOverride("font_color", TitleBlue);
         _header.AddThemeColorOverride("font_outline_color", Colors.Black);
         _header.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
         _header.AddThemeFontSizeOverride("font_size", DpsHudTypography.HeaderSize);
-        _header.MouseEntered += () => SetHeaderTooltipText(HeaderTooltip.Enter());
-        _header.MouseExited += () => SetHeaderTooltipText(HeaderTooltip.Exit());
         headerRow.AddChild(_header);
 
         _nextPlayerButton = CreateArrowButton("▶", OnNextPlayerPressed);
@@ -1030,6 +1038,7 @@ public static partial class DpsMeterUi
         _moduleGrid.AddThemeConstantOverride("h_separation", 6);
         _moduleGrid.AddThemeConstantOverride("v_separation", 4);
         _contentScroll.AddChild(_moduleGrid);
+        BuildHeaderTooltip(canvas);
     }
 
     private static Button CreateArrowButton(string text, Action pressed)
@@ -1092,11 +1101,6 @@ public static partial class DpsMeterUi
         option.AddThemeStyleboxOverride("hover", hover);
         option.AddThemeStyleboxOverride("pressed", pressed);
         option.AddThemeStyleboxOverride("focus", hover);
-    }
-
-    private static void SetHeaderTooltipText(string text)
-    {
-        if (IsAlive(_header) && _header!.TooltipText != text) _header.TooltipText = text;
     }
 
     private static void OnPanelGuiInput(InputEvent @event)

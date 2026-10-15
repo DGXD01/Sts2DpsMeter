@@ -20,6 +20,9 @@ public static class DpsMeterSettingsUi
 
     public static bool IsVisible => _visible;
 
+    internal static bool CoversMouse() => IsAlive(_panel) && _panel!.IsVisibleInTree() &&
+        new Rect2(Vector2.Zero, _panel.Size).HasPoint(_panel.GetLocalMousePosition());
+
     public static void EnsureAttached(CanvasLayer canvas)
     {
         DpsLocalization.EnsureSubscribed();

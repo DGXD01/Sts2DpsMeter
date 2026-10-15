@@ -96,7 +96,7 @@ internal static class DpsHudSummary
     }
 }
 
-// 悬停时固定一份完整标题，避免持续变化的 DPS 文本让原生提示在鼠标轻微移动时被取消。
+// 悬停时固定一份完整标题，避免阅读浮层时持续变化的 DPS 数字打断阅读。
 internal sealed class HudTitleTooltipState
 {
     private string _latest = string.Empty;

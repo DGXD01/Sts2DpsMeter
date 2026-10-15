@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
+using Godot;
 using Sts2DpsMeter;
 
 internal static class StageThreeChecks
@@ -22,6 +23,7 @@ internal static class StageThreeChecks
         CheckRealViews();
         CheckRecentAndTiming();
         CheckHeaderTooltipUpdates();
+        CheckTooltipDelayAndPlacement();
     }
 
     private static void CheckHeaderTooltipUpdates()
@@ -51,7 +53,50 @@ internal static class StageThreeChecks
         settings.SummaryDamage = settings.SummaryDps = settings.SummaryDpt = false;
         var scopeOnly = DpsHudSummary.Title(settings, values, HudScope.Turn, false, null, true);
         Require(state.Update(scopeOnly) == "本回合" && state.Enter() == "本回合", "摘要全关后的提示不得残留旧指标");
-        Console.WriteLine("通过：标题全文、1,000 次 DPS 更新时悬停快照稳定、移开刷新、重建清理及长名称/双语/全关边界；原生悬停/拖动待复验");
+        Console.WriteLine("通过：标题全文、1,000 次 DPS 更新时悬停快照稳定、移开刷新、重建清理及长名称/双语/全关边界；实际浮层/拖动待复验");
+    }
+
+    private static void CheckTooltipDelayAndPlacement()
+    {
+        var delay = new HudHoverDelay();
+        Require(!delay.Update(true, 0.1) && !delay.Update(true, 0.1) && !delay.Update(true, 0.1),
+            "划过标题不能立即弹出浮层");
+        Require(delay.Update(true, 0.1) && delay.Update(true, 0), "停留达到门槛后显示，零耗时帧不得关闭已显示提示");
+        Require(!delay.Update(false, 1) && !delay.Update(true, 0.1), "离开、拖动、遮挡或隐藏后必须重新计时");
+        delay.Reset();
+        foreach (var invalid in new[] { -1d, double.NaN, double.PositiveInfinity })
+            Require(!delay.Update(true, invalid), "无效耗时不能触发提示");
+        Require(!delay.Update(true, 30), "窗口恢复的长帧不能绕过停留门槛");
+        delay.Reset();
+        for (var index = 0; index < 23; index++) Require(!delay.Update(true, 1d / 60), "60 FPS 下不能提前显示");
+        Require(delay.Update(true, 1d / 60), "不同帧率应使用相同停留时长");
+
+        var cases = 0;
+        foreach (var screen in new[] { new Vector2(1280, 720), new Vector2(1920, 1080), new Vector2(2560, 1440) })
+        foreach (var scale in new[] { 0.75f, 1f, 1.25f, 1.5f })
+        foreach (var origin in new[] { Vector2.Zero, new Vector2(30, 20) })
+        foreach (var fraction in new[] { Vector2.Zero, new Vector2(1, 0), new Vector2(0, 1), Vector2.One, new Vector2(0.5f, 0.5f) })
+        {
+            var viewport = new Rect2(origin, screen);
+            var size = new Vector2(400, 240) * scale;
+            var headerSize = new Vector2(160, 30) * scale;
+            var anchor = new Rect2(origin + (screen - headerSize) * fraction, headerSize);
+            var position = DpsHudTooltip.Position(anchor, size, viewport);
+            Require(position.X >= origin.X + 8 && position.Y >= origin.Y + 8 &&
+                position.X + size.X <= viewport.End.X - 8 && position.Y + size.Y <= viewport.End.Y - 8,
+                "所有边缘与缩放下提示应留在可见区域，不能被右下边界裁掉");
+            cases++;
+        }
+        var area = new Rect2(0, 0, 1280, 720);
+        var top = new Rect2(100, 20, 160, 30);
+        var bottom = new Rect2(100, 660, 160, 30);
+        var tipSize = new Vector2(400, 160);
+        Require(DpsHudTooltip.Position(top, tipSize, area).Y >= top.End.Y + 8 &&
+            DpsHudTooltip.Position(bottom, tipSize, area).Y + tipSize.Y <= bottom.Position.Y - 8,
+            "正常显示在标题下方，底部空间不足时翻至标题上方");
+        Require(DpsHudTooltip.Position(top, new Vector2(2000, 1000), area) == new Vector2(8, 8),
+            "尺寸超出视口时仍应安全定位，不得对反向范围执行 Clamp");
+        Console.WriteLine($"通过：浮层停留计时、离开/不可用重置、无效/长帧、{cases} 个边界/缩放/视口原点及上下翻转场景；原生绘制与鼠标仍待实机复验");
     }
 
     private static PlayerStatsSnapshot Player()
