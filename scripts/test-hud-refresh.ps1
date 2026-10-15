@@ -47,7 +47,7 @@ if ($LASTEXITCODE -ne 0) {
     throw 'HUD 刷新检查项目构建失败。'
 }
 
-& dotnet (Join-Path $workPath 'bin\Release\net9.0\HudRefreshChecks.dll')
+& dotnet (Join-Path $workPath 'bin\Release\net9.0\HudRefreshChecks.dll') (Join-Path $workPath '图标预览')
 if ($LASTEXITCODE -ne 0) {
     throw 'HUD 刷新检查失败。'
 }

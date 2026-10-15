@@ -132,7 +132,7 @@ public static partial class DpsMeterUi
         public string Key { get; private set; } = string.Empty;
         private readonly Control _row = new() { MouseFilter = Control.MouseFilterEnum.Pass };
         private readonly ProgressBar _progress;
-        private readonly Label _icon;
+        private readonly TextureRect _icon;
         private readonly Control _nameColumn;
         private readonly Label _name;
         private readonly RichTextLabel _richName;
@@ -177,9 +177,17 @@ public static partial class DpsMeterUi
             columns.AddThemeConstantOverride("separation", 6);
             overlay.AddChild(columns);
 
-            _icon = CreateTextColumn("IconColumn", HorizontalAlignment.Center);
-            _icon.CustomMinimumSize = new Vector2(16, 0);
-            _icon.AddThemeColorOverride("font_color", TitleBlue);
+            _icon = new TextureRect
+            {
+                Name = "IconColumn",
+                CustomMinimumSize = new Vector2(DpsHudSourceIcons.ColumnSize, DpsHudSourceIcons.ColumnSize),
+                ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
+                StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
+                SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
+                SelfModulate = TitleBlue,
+                TextureFilter = CanvasItem.TextureFilterEnum.Linear,
+                MouseFilter = Control.MouseFilterEnum.Ignore
+            };
             columns.AddChild(_icon);
             _nameColumn = new Control
             {
@@ -243,7 +251,6 @@ public static partial class DpsMeterUi
                 var fontSize = compact ? DpsHudTypography.CompactBodySize : DpsHudTypography.BodySize;
                 _row.CustomMinimumSize = new Vector2(0, compact ? 26 : 30);
                 _name.AddThemeFontSizeOverride("font_size", fontSize);
-                _icon.AddThemeFontSizeOverride("font_size", compact ? 12 : 14);
                 _richName.AddThemeFontSizeOverride("normal_font_size", fontSize);
                 _richName.AddThemeFontSizeOverride("bold_font_size", fontSize);
                 foreach (var value in _values) value.AddThemeFontSizeOverride("font_size", fontSize);
@@ -270,8 +277,8 @@ public static partial class DpsMeterUi
             }
             if (_lastPresentation?.Fields != fields) { _measurementsDirty = true; changed = true; }
             _progress.Value = percentage;
-            _icon.Text = settings.ShowSourceIcons && data.Info?.SourceType is { } sourceType
-                ? DpsHudSourceInfo.Icon(sourceType) : string.Empty;
+            _icon.Texture = settings.ShowSourceIcons && data.Info?.SourceType is { } sourceType
+                ? DpsHudSourceIcons.GetTexture(sourceType) : null;
             _row.TooltipText = data.Info is null ? string.Empty : DpsHudSourceInfo.Tooltip(
                 data.Label, data.Damage, percentage, data.Info, settings.TooltipDetailMode, chinese);
             changed |= SetVisible(_details, expanded);

@@ -1,8 +1,10 @@
 using System;
+using System.IO;
 using System.Reflection;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Xml.Linq;
 using Godot;
 using Sts2DpsMeter;
 
@@ -20,7 +22,7 @@ internal static class Program
         }
     }
 
-    private static void Main()
+    private static void Main(string[] args)
     {
         // 测试真实 Mod 程序集；不启动 Godot，不使用替身控件。
         // 无场景树时调用刷新入口必须安全，后台线程只能写请求标记。
@@ -68,6 +70,7 @@ internal static class Program
         CheckFrameConsumer();
         CheckLayoutBounds();
         CheckSourcePresentation();
+        CheckSourceIcons(args.FirstOrDefault());
         CheckMaximumSnapshots();
         CheckFieldsAndSelection();
         CheckScopeRows();
@@ -165,15 +168,42 @@ internal static class Program
         Console.WriteLine($"通过：64 种字段组合、{cases} 个列宽场景、真实设置 JSON 往返及单行详情选择状态");
     }
 
+    private static void CheckSourceIcons(string? previewDirectory)
+    {
+        var distinct = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+        if (previewDirectory is not null) Directory.CreateDirectory(previewDirectory);
+        foreach (var type in Enum.GetValues<DamageSourceType>())
+        {
+            var svg = DpsHudSourceIcons.GetSvg(type);
+            var document = XDocument.Parse(svg);
+            Require(document.Root?.Name == XName.Get("svg", "http://www.w3.org/2000/svg") &&
+                (string?)document.Root.Attribute("viewBox") == "0 0 24 24", $"{type} 的图标文档或绘制边界错误");
+            Require(document.Descendants().All(element => element.Name.LocalName is
+                "svg" or "g" or "path" or "rect" or "circle" or "ellipse"),
+                $"{type} 不能依赖外部资源、文本或字体");
+            Require(distinct.Add(svg), $"{type} 应具有可区分的类型图标");
+            if (previewDirectory is not null) File.WriteAllText(Path.Combine(previewDirectory, $"{type}.svg"), svg);
+        }
+        Require(DpsHudSourceIcons.Normalize((DamageSourceType)999) == DamageSourceType.Unknown &&
+            DpsHudSourceIcons.GetSvg((DamageSourceType)999) == DpsHudSourceIcons.GetSvg(DamageSourceType.Unknown),
+            "未知枚举必须复用未知图标，不能无限增加纹理缓存");
+        var pixels = DpsHudSourceIcons.CreateFallbackPixels();
+        Require(pixels.Length == 8 * 8 * 4 && Enumerable.Range(0, 64).Any(index => pixels[index * 4 + 3] == 255) &&
+            Enumerable.Range(0, 64).Any(index => pixels[index * 4 + 3] == 0),
+            "SVG 解码失败时的备用图必须包含可见内容及透明背景");
+        Require(Enumerable.Range(0, 64).All(index => pixels[index * 4] == pixels[index * 4 + 3] &&
+            pixels[index * 4 + 1] == pixels[index * 4 + 3] && pixels[index * 4 + 2] == pixels[index * 4 + 3]),
+            "备用图 RGBA 通道必须匹配，不能生成透明的白色图标");
+        Console.WriteLine("通过：10 类独立 SVG 图元、无字体/外部依赖、未知枚举回退及备用位图；原生纹理显示仍待实机确认");
+    }
+
     private static void CheckSourcePresentation()
     {
         foreach (var type in Enum.GetValues<DamageSourceType>())
         {
-            Require(!string.IsNullOrWhiteSpace(DpsHudSourceInfo.Icon(type)), $"{type} 缺少图标回退");
             Require(!string.IsNullOrWhiteSpace(DpsHudSourceInfo.TypeName(type, true)) &&
                 !string.IsNullOrWhiteSpace(DpsHudSourceInfo.TypeName(type, false)), "来源类型必须支持双语");
         }
-        Require(DpsHudSourceInfo.Icon((DamageSourceType)999) == "?", "新增或未知枚举必须安全回退");
         var source = new SourceStatsSnapshot("Poison", 30, "power-poison", DamageSourceType.Power,
             DamageCategory.Output, AttributionConfidence.Inferred, DamageMechanismKind.Poison,
             SourceTrackingStatus.Deferred, null, null, null, null, 3, 5, 20, 5, 16);

@@ -71,20 +71,6 @@ internal static class DpsHudSourceInfo
         return distinct.Length == 1 ? distinct[0] : null;
     }
 
-    internal static string Icon(DamageSourceType? type) => type switch
-    {
-        DamageSourceType.Card => "⚔",
-        DamageSourceType.Power => "✦",
-        DamageSourceType.Relic => "♦",
-        DamageSourceType.Potion => "◉",
-        DamageSourceType.Orb => "●",
-        DamageSourceType.Pet => "♟",
-        DamageSourceType.Enemy => "▼",
-        DamageSourceType.Event => "★",
-        DamageSourceType.Self => "↩",
-        _ => "?"
-    };
-
     internal static string TypeName(DamageSourceType type, bool chinese) => type switch
     {
         DamageSourceType.Card => chinese ? "卡牌" : "Card",
