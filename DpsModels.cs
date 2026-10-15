@@ -18,7 +18,8 @@ public sealed record SourceStatsSnapshot(
     int Hits,
     long BlockedDamage,
     long UnblockedDamage,
-    long OverkillDamage);
+    long OverkillDamage,
+    long MaxHit = 0);
 
 public sealed record CardDamageSnapshot(
     string GroupId,
@@ -34,7 +35,8 @@ public sealed record CardDamageSnapshot(
     long Damage,
     long BlockedDamage,
     long UnblockedDamage,
-    long OverkillDamage);
+    long OverkillDamage,
+    long MaxHit = 0);
 
 public sealed record MechanismDamageSnapshot(
     DamageMechanismKind Mechanism,
@@ -42,7 +44,8 @@ public sealed record MechanismDamageSnapshot(
     long Damage,
     long BlockedDamage,
     long UnblockedDamage,
-    long OverkillDamage);
+    long OverkillDamage,
+    long MaxHit = 0);
 
 public sealed record TurnStatsSnapshot(
     int Turn,

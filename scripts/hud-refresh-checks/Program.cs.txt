@@ -1,5 +1,7 @@
 using System;
 using System.Reflection;
+using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Godot;
 using Sts2DpsMeter;
@@ -65,7 +67,190 @@ internal static class Program
         Console.WriteLine("通过：生产与消费交错后，新请求仍可正常刷新");
         CheckFrameConsumer();
         CheckLayoutBounds();
+        CheckSourcePresentation();
+        CheckMaximumSnapshots();
+        CheckFieldsAndSelection();
+        CheckScopeRows();
         Console.WriteLine("HUD 刷新调度与布局边界检查全部通过；此结果不代表原生容器或游戏内交互已验收。");
+    }
+
+    private static void CheckScopeRows()
+    {
+        var cards = new[]
+        {
+            // 空显示名避开未启动游戏时的本地化单例；这里检查实际分组和数值路径。
+            new CardDamageSnapshot("group-a", string.Empty, "strike", DamageSourceType.Card,
+                SourceTrackingStatus.Tracked, null, null, null, null, 1, 12, 2, 10, 0, 12),
+            new CardDamageSnapshot("group-b", string.Empty, "strike", DamageSourceType.Card,
+                SourceTrackingStatus.Tracked, null, null, null, null, 2, 30, 5, 20, 5, 20)
+        };
+        var turn = new TurnStatsSnapshot(2, 42, 0, 0, 0, 0, 0, 0, 0, 0,
+            cards, Array.Empty<MechanismDamageSnapshot>());
+        var buildRows = typeof(DpsMeterUi).GetMethod("BuildTurnRows", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var rows = ((System.Collections.IEnumerable)buildRows.Invoke(null, new object[] { turn })!).Cast<object>().ToArray();
+        Require(rows.Length == 1, "同一卡牌的回合分组应保持现有合并语义");
+        var row = rows[0];
+        var info = (HudSourceInfo)row.GetType().GetProperty("Info")!.GetValue(row)!;
+        Require((long)row.GetType().GetProperty("Damage")!.GetValue(row)! == 42 && info.Hits == 3 &&
+            info.MaxHit == 20 && info.BlockedDamage == 7 && info.UnblockedDamage == 30 && info.OverkillDamage == 5,
+            "实际回合行必须从该回合只读快照汇总详细指标，不能使用全场数值");
+        var empty = ((System.Collections.IEnumerable)buildRows.Invoke(null, new object?[] { null })!).Cast<object>();
+        Require(!empty.Any(), "没有回合快照时不能沿用上一范围来源行");
+        var selection = (HudRowSelection)typeof(DpsMeterUi).GetField("RowSelection", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        selection.Toggle("old-player:old-scope");
+        typeof(DpsMeterUi).GetMethod("ResetContentScroll", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, null);
+        Require(selection.SelectedKey is null, "真实范围/玩家/战斗重置入口必须清除展开状态");
+        var longName = string.Concat(Enumerable.Repeat("长名👩‍🔬", 30));
+        var tooltip = DpsHudSourceInfo.Tooltip(longName, 42, 100, info, HudTooltipDetail.Simple, true);
+        Require(tooltip.StartsWith("长名") && tooltip.Replace("\n", "").Contains(longName),
+            "长名称应换行保留全文，不能在隐藏名称字段后丢失身份");
+        Console.WriteLine("通过：实际回合行聚合、空范围、共享详情重置入口与长名称完整性");
+    }
+
+    private static void CheckFieldsAndSelection()
+    {
+        var normalize = typeof(DpsMeterSettings).GetMethod("Normalize", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var clone = typeof(DpsMeterSettings).GetMethod("Clone", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var jsonOptions = (JsonSerializerOptions)typeof(DpsMeterSettings).GetField("JsonOptions", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        var cases = 0;
+        for (var mask = 0; mask < 64; mask++)
+        {
+            var settings = new DpsMeterSettingsData
+            {
+                ShowSourceIcons = false, TooltipDetailMode = HudTooltipDetail.Developer, EnableRowDetails = false,
+                ShowFieldName = (mask & 1) != 0, ShowFieldDamage = (mask & 2) != 0,
+                ShowFieldPercentage = (mask & 4) != 0, ShowFieldHits = (mask & 8) != 0,
+                ShowFieldMaxHit = (mask & 16) != 0, ShowFieldAverage = (mask & 32) != 0
+            };
+            var expected = mask == 0 ? HudRowField.Name : (HudRowField)mask;
+            normalize.Invoke(null, new object[] { settings });
+            Require(DpsHudRowFields.GetVisible(settings) == expected, "字段归一化不能更改有效组合，空组合应保留名称");
+            var copied = (DpsMeterSettingsData)clone.Invoke(null, new object[] { settings })!;
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(JsonSerializer.Serialize(copied, jsonOptions), jsonOptions)!;
+            Require(DpsHudRowFields.GetVisible(restored) == expected && !restored.ShowSourceIcons &&
+                !restored.EnableRowDetails && restored.TooltipDetailMode == HudTooltipDetail.Developer,
+                "配置复制和实际 JSON 序列化必须保留全部字段及显示开关");
+            foreach (var available in new[] { 200f, 314f, 330f, 640f })
+            {
+                var widths = new[] { 200f, 90f, 150f, 300f, 280f };
+                DpsHudRowFields.LimitWidths(widths, available, expected);
+                var count = DpsHudRowFields.NumericFields.Count(field => expected.HasFlag(field));
+                for (var index = 0; index < widths.Length; index++)
+                {
+                    Require(expected.HasFlag(DpsHudRowFields.NumericFields[index]) ? widths[index] > 0 : widths[index] == 0,
+                        "隐藏字段不能占据数值列宽，可见字段应有可用宽度");
+                }
+                var fixedSpace = 14 + 16 + (expected.HasFlag(HudRowField.Name) ? 48 : 20) + 6 * (count + 1);
+                Require(widths.Sum() + fixedSpace <= available + 0.01f, "字段组合与超长数值不能撑出可用宽度");
+                cases++;
+            }
+        }
+        var info = new HudSourceInfo(Hits: 4, MaxHit: 20);
+        Require(DpsHudRowFields.Text(HudRowField.Average, 50, 25, info, true) == "均12.5" &&
+            DpsHudRowFields.Text(HudRowField.MaxHit, 50, 25, info, false) == "↑20" &&
+            DpsHudRowFields.Text(HudRowField.Hits, 50, 25, info, false) == "4h", "可选列的真实指标和双语标记应一致");
+        Require(DpsHudRowFields.Text(HudRowField.Average, 0, 0, new HudSourceInfo(Hits: 0), true) == "" &&
+            DpsHudRowFields.Text(HudRowField.MaxHit, 4, 100, new HudSourceInfo(MetricName: "Energy"), true) == "",
+            "缺失指标或零命中不应伪造最大/平均值");
+        var selection = new HudRowSelection();
+        selection.Toggle("source:A");
+        Require(selection.SelectedKey == "source:A", "点击来源应展开");
+        selection.Toggle("source:B");
+        Require(selection.SelectedKey == "source:B", "同时只能展开一个来源");
+        selection.Toggle("source:B");
+        Require(selection.SelectedKey is null, "再次点击应收起");
+        selection.Toggle("player:1");
+        selection.Clear();
+        Require(selection.SelectedKey is null, "范围/玩家/战斗切换应清除详情状态");
+        Console.WriteLine($"通过：64 种字段组合、{cases} 个列宽场景、真实设置 JSON 往返及单行详情选择状态");
+    }
+
+    private static void CheckSourcePresentation()
+    {
+        foreach (var type in Enum.GetValues<DamageSourceType>())
+        {
+            Require(!string.IsNullOrWhiteSpace(DpsHudSourceInfo.Icon(type)), $"{type} 缺少图标回退");
+            Require(!string.IsNullOrWhiteSpace(DpsHudSourceInfo.TypeName(type, true)) &&
+                !string.IsNullOrWhiteSpace(DpsHudSourceInfo.TypeName(type, false)), "来源类型必须支持双语");
+        }
+        Require(DpsHudSourceInfo.Icon((DamageSourceType)999) == "?", "新增或未知枚举必须安全回退");
+        var source = new SourceStatsSnapshot("Poison", 30, "power-poison", DamageSourceType.Power,
+            DamageCategory.Output, AttributionConfidence.Inferred, DamageMechanismKind.Poison,
+            SourceTrackingStatus.Deferred, null, null, null, null, 3, 5, 20, 5, 16);
+        var info = DpsHudSourceInfo.FromSources(new[] { source });
+        Require(DpsHudSourceInfo.SourceKey(source) != DpsHudSourceInfo.SourceKey(source with { TriggerCardId = "another-card" }) &&
+            DpsHudSourceInfo.SourceKey(source) == DpsHudSourceInfo.SourceKey(source with { Damage = 999, Hits = 99 }),
+            "相同机制的不同触发卡牌须独立展开，数值变化不能改变来源身份");
+        foreach (var chinese in new[] { true, false })
+        {
+            var simple = DpsHudSourceInfo.Tooltip(source.Source, 30, 75, info, HudTooltipDetail.Simple, chinese);
+            var detailed = DpsHudSourceInfo.Tooltip(source.Source, 30, 75, info, HudTooltipDetail.Detailed, chinese);
+            var developer = DpsHudSourceInfo.Tooltip(source.Source, 30, 75, info, HudTooltipDetail.Developer, chinese);
+            Require(!simple.Contains("Inferred") && !detailed.Contains("Inferred") &&
+                !detailed.Contains("power-poison") && developer.Contains("Inferred") && developer.Contains("power-poison"),
+                "归因置信度和内部 ID 只能出现在开发者提示中");
+            Require(detailed.Contains(chinese ? "平均伤害: 10" : "Average: 10") &&
+                detailed.Contains(chinese ? "最大伤害: 16" : "Max hit: 16"), "详细提示应使用来源真实命中和最大值");
+            Require(detailed.Split('\n').Length > simple.Split('\n').Length, "简洁模式必须减少常驻提示信息");
+        }
+        var mixed = DpsHudSourceInfo.FromSources(new[] { source, source with
+        {
+            InternalId = "card-strike", SourceType = DamageSourceType.Card,
+            Confidence = AttributionConfidence.Exact, Mechanism = DamageMechanismKind.DirectAttack,
+            Damage = 20, Hits = 1, MaxHit = 20
+        } });
+        Require(mixed.Hits == 4 && mixed.MaxHit == 20 && mixed.BlockedDamage == 10 &&
+            mixed.SourceType == DamageSourceType.Unknown && mixed.Confidence is null && mixed.InternalId is null,
+            "同名混合来源必须汇总指标，不能冒用首项来源类型或置信度");
+        var metric = DpsHudSourceInfo.Tooltip("Energy", 4, 100,
+            new HudSourceInfo(MetricName: "Energy spent"), HudTooltipDetail.Detailed, false);
+        Require(metric.Contains("Energy spent: 4") && !metric.Contains("Average") && !metric.Contains("Max hit") &&
+            !metric.Contains("HP damage"), "辅助与能量行不得伪造伤害明细");
+        var empty = DpsHudSourceInfo.Tooltip("Empty", 0, 0,
+            new HudSourceInfo(Hits: 0), HudTooltipDetail.Detailed, false);
+        Require(!empty.Contains("Average") && !empty.Contains("NaN"), "零命中不能出现无意义平均值");
+        var legacy = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"SchemaVersion\":4,\"MaxRows\":8,\"UiScale\":1.5}")!;
+        typeof(DpsMeterSettings).GetMethod("Normalize", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { legacy });
+        Require(legacy.SchemaVersion == 5 && legacy.ShowSourceIcons && legacy.TooltipDetailMode == HudTooltipDetail.Detailed &&
+            legacy.MaxRows == 8 && legacy.UiScale == 1.5f, "旧设置升级必须保留已有值并补充新字段默认值");
+        legacy.TooltipDetailMode = (HudTooltipDetail)999;
+        typeof(DpsMeterSettings).GetMethod("Normalize", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { legacy });
+        Require(legacy.TooltipDetailMode == HudTooltipDetail.Detailed, "无效提示详细度必须安全归一化");
+        Console.WriteLine("通过：全部来源类型回退、双语三级提示、混合来源、零命中/辅助边界及旧设置升级");
+    }
+
+    private static void CheckMaximumSnapshots()
+    {
+        var attribution = new DamageAttribution("Strike", "strike", DamageSourceType.Card, DamageCategory.Output,
+            AttributionConfidence.Exact, DamageMechanismKind.DirectAttack, SourceTrackingStatus.Tracked,
+            null, null, null, null, null);
+        var flags = BindingFlags.NonPublic;
+        var sourceType = typeof(DpsStats).GetNestedType("SourceAccumulator", flags)!;
+        var cardType = typeof(DpsStats).GetNestedType("CardDamageAccumulator", flags)!;
+        var mechanismType = typeof(DpsStats).GetNestedType("MechanismAccumulator", flags)!;
+        var identityType = typeof(DpsStats).GetNestedType("OutputGroupIdentity", flags)!;
+        var identity = Activator.CreateInstance(identityType, new object[] { "strike", "Strike", "strike" })!;
+        var accumulators = new[]
+        {
+            Activator.CreateInstance(sourceType, new object[] { attribution })!,
+            Activator.CreateInstance(cardType, new[] { identity, attribution })!,
+            Activator.CreateInstance(mechanismType, new object[] { DamageMechanismKind.DirectAttack })!
+        };
+        foreach (var accumulator in accumulators)
+        {
+            var type = accumulator.GetType();
+            var add = type.GetMethod("Add", new[] { typeof(long), typeof(long), typeof(long), typeof(long) })!;
+            add.Invoke(accumulator, new object[] { 12L, 2L, 10L, 0L });
+            var first = type.GetMethod("ToSnapshot")!.Invoke(accumulator, null)!;
+            add.Invoke(accumulator, new object[] { 30L, 5L, 20L, 5L });
+            var final = type.GetMethod("ToSnapshot")!.Invoke(accumulator, null)!;
+            long Read(object snapshot, string field) => Convert.ToInt64(snapshot.GetType().GetProperty(field)!.GetValue(snapshot));
+            Require(Read(first, "MaxHit") == 12 && Read(final, "MaxHit") == 30 &&
+                Read(final, "Damage") == 42 && Read(final, "Hits") == 2 &&
+                Read(final, "BlockedDamage") == 7 && Read(final, "UnblockedDamage") == 30 && Read(final, "OverkillDamage") == 5,
+                "最大单次补充不能改变总量、命中、伤害拆分或既有快照");
+        }
+        Console.WriteLine("通过：来源、回合卡牌及机制三个真实累加器的最大单次和只读快照回归");
     }
 
     private static void CheckFrameConsumer()
@@ -160,6 +345,25 @@ internal static class Program
             new Vector2(420, 51), 28, false);
         Require(wideHeader.Size.X >= 420 && wideHeader.Size.X * 2 <= 1280,
             "较宽的本地化标题控件应保留所需宽度");
-        Console.WriteLine($"通过：{cases + 2} 个布局场景，覆盖四种分辨率、六档缩放、超长内容、越界位置及折叠");
+        var pixelCases = 0;
+        foreach (var viewport in viewports)
+        {
+            foreach (var scale in scales)
+            {
+                foreach (var position in new[] { new Vector2(18.3f, 18.7f), new Vector2(9999.7f, 9999.3f) })
+                {
+                    var bounds = DpsHudLayout.Calculate(viewport, position, scale, new Vector2(340, 51), 83, false);
+                    Require(bounds.Position.X == MathF.Round(bounds.Position.X) && bounds.Position.Y == MathF.Round(bounds.Position.Y),
+                        "面板原点应对齐整像素，避免保存的小数位置使文字落在半像素上");
+                    Require(bounds.Position.X + bounds.Size.X * scale <= viewport.X + tolerance &&
+                        bounds.Position.Y + bounds.Size.Y * scale <= viewport.Y + tolerance,
+                        "整像素对齐不能把缩放后的面板推出屏幕");
+                    Require(DpsHudLayout.Calculate(viewport, bounds.Position, scale, new Vector2(340, 51), 83, false) == bounds,
+                        "整像素位置反复布局后不能漂移");
+                    pixelCases++;
+                }
+            }
+        }
+        Console.WriteLine($"通过：{cases + 2 + pixelCases} 个布局场景，其中 {pixelCases} 个覆盖小数位置与整像素边界");
     }
 }

@@ -22,9 +22,10 @@ internal static class DpsHudLayout
         var heightLimit = Math.Max(chromeMinimum.Y, (viewport.Y - ScreenPadding) / uiScale);
         var bodyHeight = collapsed ? 0f : Math.Clamp(contentHeight, 0f, heightLimit - chromeMinimum.Y);
         var size = new Vector2(width, chromeMinimum.Y + bodyHeight);
+        // 面板起点落在整像素；向下取边界，避免四舍五入后越出屏幕。
         var boundedPosition = new Vector2(
-            Math.Clamp(position.X, 0f, Math.Max(0f, viewport.X - size.X * uiScale)),
-            Math.Clamp(position.Y, 0f, Math.Max(0f, viewport.Y - size.Y * uiScale)));
+            Math.Clamp(MathF.Round(position.X), 0f, Math.Max(0f, MathF.Floor(viewport.X - size.X * uiScale))),
+            Math.Clamp(MathF.Round(position.Y), 0f, Math.Max(0f, MathF.Floor(viewport.Y - size.Y * uiScale))));
         return new HudPanelBounds(size, boundedPosition, bodyHeight);
     }
 }

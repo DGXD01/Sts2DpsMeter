@@ -9,8 +9,8 @@ public static class DpsMeterSettingsUi
     private static readonly Color SettingsBackground = new(0.035f, 0.045f, 0.07f, 0.97f);
     private static readonly Color SettingsBorder = new(0.32f, 0.72f, 1f, 0.95f);
     private static readonly Color HeadingColor = new(0.56f, 0.86f, 1f);
-    private static readonly Color MutedColor = new(0.68f, 0.74f, 0.82f);
-    private static readonly Color BodyColor = new(0.9f, 0.94f, 1f);
+    private static readonly Color MutedColor = new(0.82f, 0.85f, 0.9f);
+    private static readonly Color BodyColor = Colors.White;
 
     private static PanelContainer? _panel;
     private static VBoxContainer? _content;
@@ -79,6 +79,7 @@ public static class DpsMeterSettingsUi
             Visible = false,
             MouseFilter = Control.MouseFilterEnum.Stop
         };
+        DpsHudTypography.Apply(_panel);
 
         var style = new StyleBoxFlat
         {
@@ -110,7 +111,7 @@ public static class DpsMeterSettingsUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         _titleLabel.AddThemeColorOverride("font_color", HeadingColor);
-        _titleLabel.AddThemeFontSizeOverride("font_size", 16);
+        _titleLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.SettingsTitleSize);
         root.AddChild(_titleLabel);
 
         _introductionLabel = new Label
@@ -120,13 +121,15 @@ public static class DpsMeterSettingsUi
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         _introductionLabel.AddThemeColorOverride("font_color", MutedColor);
-        _introductionLabel.AddThemeFontSizeOverride("font_size", 12);
+        _introductionLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.SettingsNoteSize);
         root.AddChild(_introductionLabel);
 
         var scroll = new ScrollContainer
         {
             SizeFlagsVertical = Control.SizeFlags.ExpandFill,
-            CustomMinimumSize = new Vector2(455, 520)
+            FocusMode = Control.FocusModeEnum.None,
+            // 高度由面板剩余空间分配，较大的说明字号不再叠加固定 520px 明细下限。
+            CustomMinimumSize = new Vector2(455, 0)
         };
         root.AddChild(scroll);
 
@@ -216,8 +219,36 @@ public static class DpsMeterSettingsUi
             settings.ShowCardsDrawnForAllies = value;
             SaveAndRefresh();
         });
-        AddText(DpsLocalization.Get("队友增益仅在多人模式显示；单人模式下这些开关不会新增 HUD 模块。", "Ally support is shown only in multiplayer; these toggles do not add HUD modules in single-player."), MutedColor, 11);
-        AddText(DpsLocalization.Get("可在下方勾选需要显示的模块；统计范围仅切换数据的时间维度，不改变模块开关。", "Select the modules to display below; scope changes only the time range, not the module toggles."), MutedColor, 11);
+        AddText(DpsLocalization.Get("队友增益仅在多人模式显示；单人模式下这些开关不会新增 HUD 模块。", "Ally support is shown only in multiplayer; these toggles do not add HUD modules in single-player."), MutedColor);
+        AddText(DpsLocalization.Get("可在下方勾选需要显示的模块；统计范围仅切换数据的时间维度，不改变模块开关。", "Select the modules to display below; scope changes only the time range, not the module toggles."), MutedColor);
+
+        AddSection(DpsLocalization.Get("数据行", "Data Rows"));
+        AddToggle(DpsLocalization.Get("显示来源图标", "Show source icons"), settings.ShowSourceIcons, value =>
+        {
+            settings.ShowSourceIcons = value;
+            SaveAndRefresh();
+        });
+        AddOptionRow(DpsLocalization.Get("悬停提示详细度", "Tooltip detail"),
+            new[] { DpsLocalization.Get("简洁", "Simple"), DpsLocalization.Get("详细", "Detailed"), DpsLocalization.Get("开发者", "Developer") },
+            (int)settings.TooltipDetailMode, value =>
+        {
+            settings.TooltipDetailMode = (HudTooltipDetail)value;
+            SaveAndRefresh();
+        });
+        AddToggle(DpsLocalization.Get("点击行展开详情", "Click rows for details"), settings.EnableRowDetails, value =>
+        {
+            settings.EnableRowDetails = value;
+            SaveAndRefresh();
+        });
+        AddToggle(DpsLocalization.Get("显示名称", "Show name"), settings.ShowFieldName, value => SetField(() => settings.ShowFieldName = value));
+        AddToggle(DpsLocalization.Get("显示数值", "Show value"), settings.ShowFieldDamage, value => SetField(() => settings.ShowFieldDamage = value));
+        AddToggle(DpsLocalization.Get("显示百分比", "Show percentage"), settings.ShowFieldPercentage, value => SetField(() => settings.ShowFieldPercentage = value));
+        AddToggle(DpsLocalization.Get("显示命中次数", "Show hits"), settings.ShowFieldHits, value => SetField(() => settings.ShowFieldHits = value));
+        AddToggle(DpsLocalization.Get("显示最大伤害", "Show max hit"), settings.ShowFieldMaxHit, value => SetField(() => settings.ShowFieldMaxHit = value));
+        AddToggle(DpsLocalization.Get("显示平均伤害", "Show average"), settings.ShowFieldAverage, value => SetField(() => settings.ShowFieldAverage = value));
+        AddText(DpsLocalization.Get(
+            "隐藏名称时保留行号，悬停可查看完整名称；字段全部关闭时保留名称。命中/最大/平均仅在有对应记录时显示。点击来源行查看详情，拖动标题栏移动 HUD。",
+            "Hidden names use row numbers; hover to identify each row. At least the name is retained when all fields are off. Hits/max/average require matching records. Click rows for details; drag the header to move the HUD."), MutedColor);
 
         AddSection(DpsLocalization.Get("布局与密度", "Layout & Density"));
         AddSliderRow(DpsLocalization.Get("伤害来源显示行数", "Damage source rows"), settings.MaxRows, 1, 12, 1, value =>
@@ -239,7 +270,7 @@ public static class DpsMeterSettingsUi
         {
             settings.UiScale = DpsMeterSettings.ClampUiScale((float)value);
         });
-        AddText(DpsLocalization.Get("界面缩放仅通过上方滑块调整，不注册键盘或鼠标滚轮热键。", "UI scale is adjusted only by the slider above; no keyboard or mouse-wheel hotkeys are registered."), MutedColor, 11);
+        AddText(DpsLocalization.Get("界面缩放仅通过上方滑块调整，不注册键盘或鼠标滚轮热键。", "UI scale is adjusted only by the slider above; no keyboard or mouse-wheel hotkeys are registered."), MutedColor);
 
         var resetScale = new Button
         {
@@ -290,8 +321,8 @@ public static class DpsMeterSettingsUi
         close.Pressed += () => ToggleVisibility();
         _content!.AddChild(close);
 
-        AddText(DpsLocalization.Get("配置文件", "Config File"), MutedColor, 12);
-        AddText(DpsMeterSettings.FilePath, MutedColor, 11);
+        AddText(DpsLocalization.Get("配置文件", "Config File"), MutedColor);
+        AddText(DpsMeterSettings.FilePath, MutedColor);
     }
 
     private static void AddSection(string title)
@@ -302,7 +333,7 @@ public static class DpsMeterSettingsUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         label.AddThemeColorOverride("font_color", HeadingColor);
-        label.AddThemeFontSizeOverride("font_size", 14);
+        label.AddThemeFontSizeOverride("font_size", DpsHudTypography.HeaderSize);
         _content!.AddChild(label);
     }
 
@@ -314,6 +345,8 @@ public static class DpsMeterSettingsUi
             Text = title,
             ButtonPressed = value
         };
+        toggle.AddThemeColorOverride("font_color", BodyColor);
+        toggle.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
         toggle.Toggled += pressed => changed(pressed);
         _content!.AddChild(toggle);
     }
@@ -332,6 +365,12 @@ public static class DpsMeterSettingsUi
         }
 
         option.Selected = Math.Clamp(selected, 0, options.Length - 1);
+        option.AddThemeColorOverride("font_color", BodyColor);
+        option.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+        // 弹出菜单是独立窗口，显式共享字体主题，不能只依赖面板继承。
+        var popup = option.GetPopup();
+        popup.Theme = _panel!.Theme;
+        popup.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
         option.ItemSelected += index => changed((int)index);
         row.AddChild(option);
         _content!.AddChild(row);
@@ -353,7 +392,7 @@ public static class DpsMeterSettingsUi
             HorizontalAlignment = HorizontalAlignment.Right
         };
         valueLabel.AddThemeColorOverride("font_color", BodyColor);
-        valueLabel.AddThemeFontSizeOverride("font_size", 12);
+        valueLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
 
         var slider = new HSlider
         {
@@ -389,11 +428,12 @@ public static class DpsMeterSettingsUi
         var label = new Label
         {
             Text = title,
-            CustomMinimumSize = new Vector2(130, 0),
+            CustomMinimumSize = new Vector2(150, 0),
+            AutowrapMode = TextServer.AutowrapMode.WordSmart,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         label.AddThemeColorOverride("font_color", BodyColor);
-        label.AddThemeFontSizeOverride("font_size", 12);
+        label.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
         row.AddChild(label);
         return row;
     }
@@ -403,7 +443,7 @@ public static class DpsMeterSettingsUi
         return step < 1 ? value.ToString("0.00") : Math.Round(value).ToString("0");
     }
 
-    private static void AddText(string text, Color color, int fontSize)
+    private static void AddText(string text, Color color)
     {
         var label = new Label
         {
@@ -412,7 +452,7 @@ public static class DpsMeterSettingsUi
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         label.AddThemeColorOverride("font_color", color);
-        label.AddThemeFontSizeOverride("font_size", fontSize);
+        label.AddThemeFontSizeOverride("font_size", DpsHudTypography.SettingsNoteSize);
         _content!.AddChild(label);
     }
 
@@ -420,6 +460,14 @@ public static class DpsMeterSettingsUi
     {
         DpsMeterSettings.Save();
         DpsMeterUi.Refresh();
+    }
+
+    private static void SetField(Action update)
+    {
+        update();
+        SaveAndRefresh();
+        // 同步“全部关闭时保留名称”的归一化结果，不在事件回调中直接移除控件。
+        Callable.From(Refresh).CallDeferred();
     }
 
     private static void ClearChildren(Node node)

@@ -17,13 +17,13 @@ public static partial class DpsMeterUi
 
     private static readonly Color PanelBackground = new(0f, 0f, 0f, 0.92f);
     private static readonly Color PanelBorder = new(0.92f, 0.95f, 1f, 0.88f);
-    private static readonly Color TitleBlue = new(0.2f, 0.6f, 1f);
-    private static readonly Color ArrowBlue = new(0.18f, 0.54f, 1f);
+    private static readonly Color TitleBlue = new(0.48f, 0.74f, 1f);
+    private static readonly Color ArrowBlue = new(0.48f, 0.72f, 1f);
     private static readonly Color BarBackground = new(0.11f, 0.12f, 0.145f, 0.96f);
     private static readonly Color BarFill = new(0.82f, 0.08f, 0.1f, 1f);
     private static readonly Color DropdownBackground = new(0.06f, 0.065f, 0.08f, 0.98f);
-    private static readonly Color PrimaryText = new(0.98f, 0.99f, 1f);
-    private static readonly Color MutedText = new(0.68f, 0.72f, 0.78f);
+    private static readonly Color PrimaryText = Colors.White;
+    private static readonly Color MutedText = new(0.82f, 0.85f, 0.9f);
 
     private static CanvasLayer? _canvas;
     private static PanelContainer? _panel;
@@ -158,7 +158,7 @@ public static partial class DpsMeterUi
         {
             _header.Text = view.Title;
         }
-        UpdateNavigationState(snapshot.Players.Count);
+        var navigationChanged = UpdateNavigationState(snapshot.Players.Count);
 
         _header.TooltipText = view.Title;
         var language = DpsLocalization.LanguageCode;
@@ -167,7 +167,7 @@ public static partial class DpsMeterUi
             language, settings.CompactMode,
             settings.UiScale, settings.PositionX, settings.PositionY,
             _contentCollapsed, GetViewportSize());
-        if (contentChanged || layoutState != _lastLayoutState)
+        if (contentChanged || navigationChanged || layoutState != _lastLayoutState)
         {
             _lastLayoutState = layoutState;
             FitPanelToContent(settings);
@@ -607,7 +607,10 @@ public static partial class DpsMeterUi
                 player.TotalDamage,
                 $"{LocalizeKnownValue(player.CharacterName)} · {player.Dps:0.0} DPS · {player.Dpt:0.0} DPT · {FormatHits(player.HitCount)}",
                 player.NameColorHex,
-                player.IsLocalPlayer))
+                player.IsLocalPlayer,
+                new HudSourceInfo(Hits: player.HitCount, MaxHit: player.MaxHit,
+                    BlockedDamage: player.BlockedDamage, UnblockedDamage: player.UnblockedDamage,
+                    OverkillDamage: player.OverkillDamage), Key: player.PlayerNetId.ToString()))
             .ToArray();
     }
 
@@ -622,7 +625,9 @@ public static partial class DpsMeterUi
                 $"{LocalizeKnownValue(player.CharacterName)} · {L("敌方", "Enemy")} {player.IncomingDamage} · {L("自损", "Self")} {player.SelfLossDamage} · " +
                 $"{L("命中", "Hits")} {player.IncomingHits + player.SelfLossHits}",
                 player.NameColorHex,
-                player.IsLocalPlayer))
+                player.IsLocalPlayer,
+                new HudSourceInfo(Hits: player.IncomingHits + player.SelfLossHits,
+                    MetricName: L("受到伤害", "Damage taken")), Key: player.PlayerNetId.ToString()))
             .ToArray();
     }
 
@@ -636,7 +641,8 @@ public static partial class DpsMeterUi
                 player.BlockGained,
                 $"{LocalizeKnownValue(player.CharacterName)} · {L("格挡获得", "Block Gained")} {player.BlockGained}",
                 player.NameColorHex,
-                player.IsLocalPlayer))
+                player.IsLocalPlayer,
+                new HudSourceInfo(MetricName: L("格挡获得", "Block gained")), Key: player.PlayerNetId.ToString()))
             .ToArray();
     }
 
@@ -650,7 +656,8 @@ public static partial class DpsMeterUi
                 player.EnergySpent,
                 $"{LocalizeKnownValue(player.CharacterName)} · {L("消耗能量", "Energy Spent")} {player.EnergySpent}",
                 player.NameColorHex,
-                player.IsLocalPlayer))
+                player.IsLocalPlayer,
+                new HudSourceInfo(MetricName: L("能量消耗", "Energy spent")), Key: player.PlayerNetId.ToString()))
             .ToArray();
     }
 
@@ -667,14 +674,17 @@ public static partial class DpsMeterUi
                 selector(player),
                 $"{LocalizeKnownValue(player.CharacterName)} · {label} {selector(player)}",
                 player.NameColorHex,
-                player.IsLocalPlayer))
+                player.IsLocalPlayer,
+                new HudSourceInfo(MetricName: label), Key: player.PlayerNetId.ToString()))
             .ToArray();
     }
 
     private static IReadOnlyList<DamageRowData> BuildCurrentRows(PlayerStatsSnapshot player)
     {
         return player.Sources
-            .Select(source => new DamageRowData(LocalizeKnownValue(source.Source), source.Damage))
+            .Select(source => new DamageRowData(LocalizeKnownValue(source.Source), source.Damage,
+                Info: DpsHudSourceInfo.FromSources(new[] { source }),
+                Key: DpsHudSourceInfo.SourceKey(source)))
             .ToArray();
     }
 
@@ -689,7 +699,7 @@ public static partial class DpsMeterUi
             .GroupBy(card => card.CardId ?? card.GroupId, StringComparer.Ordinal)
             .Select(group => new DamageRowData(
                 LocalizeKnownValue(group.First().DisplayName),
-                group.Sum(card => card.Damage)))
+                group.Sum(card => card.Damage), Info: DpsHudSourceInfo.FromCards(group), Key: group.Key))
             .ToArray();
     }
 
@@ -697,14 +707,16 @@ public static partial class DpsMeterUi
     {
         return new[]
         {
-            new DamageRowData(L("敌方伤害", "Enemy Damage"), turn?.IncomingDamage ?? 0),
-            new DamageRowData(L("自损", "Self"), turn?.SelfLossDamage ?? 0)
+            new DamageRowData(L("敌方伤害", "Enemy Damage"), turn?.IncomingDamage ?? 0,
+                Info: new HudSourceInfo(DamageSourceType.Enemy, MetricName: L("受到伤害", "Damage taken"))),
+            new DamageRowData(L("自损", "Self"), turn?.SelfLossDamage ?? 0,
+                Info: new HudSourceInfo(DamageSourceType.Self, MetricName: L("自损", "Self-loss")))
         };
     }
 
     private static IReadOnlyList<DamageRowData> BuildMetricRows(string label, long value)
     {
-        return new[] { new DamageRowData(label, value) };
+        return new[] { new DamageRowData(label, value, Info: new HudSourceInfo(MetricName: label)) };
     }
 
     private static IReadOnlyList<DamageRowData> BuildTakenRows(PlayerStatsSnapshot player)
@@ -712,7 +724,8 @@ public static partial class DpsMeterUi
         return player.IncomingSources
             .Concat(player.SelfLossSources)
             .GroupBy(source => source.Source, StringComparer.Ordinal)
-            .Select(group => new DamageRowData(LocalizeKnownValue(group.Key), group.Sum(source => source.Damage)))
+            .Select(group => new DamageRowData(LocalizeKnownValue(group.Key), group.Sum(source => source.Damage),
+                Info: DpsHudSourceInfo.FromSources(group) with { MetricName = L("受到伤害", "Damage taken") }, Key: group.Key))
             .ToArray();
     }
 
@@ -779,8 +792,11 @@ public static partial class DpsMeterUi
         }
     }
 
-    private static void UpdateNavigationState(int playerCount)
+    private static bool UpdateNavigationState(int playerCount)
     {
+        // 单人不占用两枚无效箭头的宽度，给放大后的标题留出空间。
+        var changed = SetVisible(_previousPlayerButton!, playerCount > 1);
+        changed |= SetVisible(_nextPlayerButton!, playerCount > 1);
         var canSwitchPlayer = _scopeIndex != ScopeTotal && playerCount > 1;
         _previousPlayerButton!.Disabled = !canSwitchPlayer;
         _nextPlayerButton!.Disabled = !canSwitchPlayer;
@@ -788,6 +804,7 @@ public static partial class DpsMeterUi
             ? L("上一个玩家", "Previous player")
             : _scopeIndex == ScopeTotal ? L("总计显示队伍汇总", "Total shows the team summary") : L("当前仅有一个玩家", "Only one player in this combat");
         _nextPlayerButton.TooltipText = _previousPlayerButton.TooltipText;
+        return changed;
     }
 
     private static void OnPreviousPlayerPressed()
@@ -869,6 +886,7 @@ public static partial class DpsMeterUi
 
     private static void ResetContentScroll()
     {
+        RowSelection.Clear();
         if (IsAlive(_contentScroll))
         {
             _contentScroll!.ScrollVertical = 0;
@@ -913,6 +931,7 @@ public static partial class DpsMeterUi
     {
         SectionPool.Clear();
         ActiveRows.Clear();
+        RowSelection.Clear();
         _lastLayoutState = null;
         _panel = new PanelContainer
         {
@@ -922,6 +941,7 @@ public static partial class DpsMeterUi
             CustomMinimumSize = new Vector2(MinimumPanelWidth, 0f),
             MouseFilter = Control.MouseFilterEnum.Stop
         };
+        DpsHudTypography.Apply(_panel);
 
         _panelStyle = new StyleBoxFlat
         {
@@ -977,8 +997,8 @@ public static partial class DpsMeterUi
         };
         _header.AddThemeColorOverride("font_color", TitleBlue);
         _header.AddThemeColorOverride("font_outline_color", Colors.Black);
-        _header.AddThemeConstantOverride("outline_size", 3);
-        _header.AddThemeFontSizeOverride("font_size", 14);
+        _header.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
+        _header.AddThemeFontSizeOverride("font_size", DpsHudTypography.HeaderSize);
         headerRow.AddChild(_header);
 
         _nextPlayerButton = CreateArrowButton("▶", OnNextPlayerPressed);
@@ -997,7 +1017,8 @@ public static partial class DpsMeterUi
         _scopeOption.Selected = ScopeCombat;
         _scopeOption.ItemSelected += OnScopeSelected;
         _scopeOption.AddThemeColorOverride("font_color", PrimaryText);
-        _scopeOption.AddThemeFontSizeOverride("font_size", 12);
+        _scopeOption.AddThemeFontSizeOverride("font_size", DpsHudTypography.CompactBodySize);
+        _scopeOption.GetPopup().Theme = _panel.Theme;
         ApplyDropdownStyle(_scopeOption);
         headerRow.AddChild(_scopeOption);
 
@@ -1153,7 +1174,9 @@ public static partial class DpsMeterUi
         long Damage,
         string? Details = null,
         string? NameColorHex = null,
-        bool IsLocalPlayer = false);
+        bool IsLocalPlayer = false,
+        HudSourceInfo? Info = null,
+        string? Key = null);
 
     private sealed record DamageSectionData(
         string? Heading,

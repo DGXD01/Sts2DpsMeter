@@ -1044,6 +1044,8 @@ public static class DpsStats
 
         public long OverkillDamage { get; private set; }
 
+        public long MaxHit { get; private set; }
+
         public void Add(long damage, DamageResult result)
         {
             Add(damage, result.BlockedDamage, result.UnblockedDamage, result.OverkillDamage);
@@ -1051,6 +1053,7 @@ public static class DpsStats
 
         public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
         {
+            MaxHit = Math.Max(MaxHit, damage);
             Damage += damage;
             BlockedDamage += blockedDamage;
             UnblockedDamage += unblockedDamage;
@@ -1074,7 +1077,8 @@ public static class DpsStats
                 Damage,
                 BlockedDamage,
                 UnblockedDamage,
-                OverkillDamage);
+                OverkillDamage,
+                MaxHit);
         }
     }
 
@@ -1097,6 +1101,8 @@ public static class DpsStats
 
         public long OverkillDamage { get; private set; }
 
+        public long MaxHit { get; private set; }
+
         public void Add(long damage, DamageResult result)
         {
             Add(damage, result.BlockedDamage, result.UnblockedDamage, result.OverkillDamage);
@@ -1104,6 +1110,7 @@ public static class DpsStats
 
         public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
         {
+            MaxHit = Math.Max(MaxHit, damage);
             Damage += damage;
             BlockedDamage += blockedDamage;
             UnblockedDamage += unblockedDamage;
@@ -1119,7 +1126,8 @@ public static class DpsStats
                 Damage,
                 BlockedDamage,
                 UnblockedDamage,
-                OverkillDamage);
+                OverkillDamage,
+                MaxHit);
         }
     }
 
@@ -1140,6 +1148,8 @@ public static class DpsStats
 
         public long OverkillDamage { get; private set; }
 
+        public long MaxHit { get; private set; }
+
         public int Hits { get; private set; }
 
         public void Add(long damage, DamageResult result)
@@ -1149,6 +1159,7 @@ public static class DpsStats
 
         public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
         {
+            MaxHit = Math.Max(MaxHit, damage);
             Damage += damage;
             BlockedDamage += blockedDamage;
             UnblockedDamage += unblockedDamage;
@@ -1174,7 +1185,8 @@ public static class DpsStats
                 Hits,
                 BlockedDamage,
                 UnblockedDamage,
-                OverkillDamage);
+                OverkillDamage,
+                MaxHit);
         }
     }
 }

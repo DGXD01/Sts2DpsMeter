@@ -35,6 +35,7 @@ $project = @"
     <Compile Include="$(Escape-Xml $sourcePath)" />
     <Reference Include="Sts2DpsMeter"><HintPath>$(Escape-Xml $modPath)</HintPath></Reference>
     <Reference Include="GodotSharp"><HintPath>$(Escape-Xml $godotPath)</HintPath></Reference>
+    <Reference Include="sts2"><HintPath>$(Escape-Xml (Join-Path $gameData 'sts2.dll'))</HintPath></Reference>
   </ItemGroup>
 </Project>
 "@

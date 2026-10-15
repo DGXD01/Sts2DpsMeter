@@ -6,9 +6,25 @@ using Godot;
 
 namespace Sts2DpsMeter;
 
+public enum HudTooltipDetail
+{
+    Simple,
+    Detailed,
+    Developer
+}
+
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 4;
+    public int SchemaVersion { get; set; } = 5;
+    public bool ShowSourceIcons { get; set; } = true;
+    public HudTooltipDetail TooltipDetailMode { get; set; } = HudTooltipDetail.Detailed;
+    public bool EnableRowDetails { get; set; } = true;
+    public bool ShowFieldName { get; set; } = true;
+    public bool ShowFieldDamage { get; set; } = true;
+    public bool ShowFieldPercentage { get; set; } = true;
+    public bool ShowFieldHits { get; set; }
+    public bool ShowFieldMaxHit { get; set; }
+    public bool ShowFieldAverage { get; set; }
     public bool StartVisible { get; set; } = true;
     public bool LockPosition { get; set; }
     public bool CompactMode { get; set; }
@@ -34,7 +50,7 @@ public static class DpsMeterSettings
     public const float MaxUiScale = 2.0f;
     public const float UiScaleStep = 0.05f;
 
-    private const int CurrentSchemaVersion = 4;
+    private const int CurrentSchemaVersion = 5;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -150,6 +166,15 @@ public static class DpsMeterSettings
         return new DpsMeterSettingsData
         {
             SchemaVersion = source.SchemaVersion,
+            ShowSourceIcons = source.ShowSourceIcons,
+            TooltipDetailMode = source.TooltipDetailMode,
+            EnableRowDetails = source.EnableRowDetails,
+            ShowFieldName = source.ShowFieldName,
+            ShowFieldDamage = source.ShowFieldDamage,
+            ShowFieldPercentage = source.ShowFieldPercentage,
+            ShowFieldHits = source.ShowFieldHits,
+            ShowFieldMaxHit = source.ShowFieldMaxHit,
+            ShowFieldAverage = source.ShowFieldAverage,
             StartVisible = source.StartVisible,
             LockPosition = source.LockPosition,
             CompactMode = source.CompactMode,
@@ -173,6 +198,16 @@ public static class DpsMeterSettings
     private static void Normalize(DpsMeterSettingsData settings)
     {
         settings.SchemaVersion = CurrentSchemaVersion;
+        if (!Enum.IsDefined(settings.TooltipDetailMode))
+        {
+            settings.TooltipDetailMode = HudTooltipDetail.Detailed;
+        }
+        if (!settings.ShowFieldName && !settings.ShowFieldDamage && !settings.ShowFieldPercentage &&
+            !settings.ShowFieldHits && !settings.ShowFieldMaxHit && !settings.ShowFieldAverage)
+        {
+            // 所有字段都关闭时保留名称，避免出现无法识别的空白条。
+            settings.ShowFieldName = true;
+        }
         settings.Columns = Math.Clamp(settings.Columns, 1, 2);
         settings.MaxRows = Math.Clamp(settings.MaxRows, 1, MaxRowsLimit);
         settings.PanelOpacity = Math.Clamp(settings.PanelOpacity, 0.35f, 1f);
