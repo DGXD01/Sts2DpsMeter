@@ -31,6 +31,8 @@ public static class DpsStats
 
     private static bool _active;
     private static double _elapsedSeconds;
+    private static double _currentTurnElapsedSeconds;
+    private static long _damageEventSequence;
     private static int _currentTurn = 1;
 
     public static void ResetRun()
@@ -41,6 +43,8 @@ public static class DpsStats
             PendingDoomKills.Clear();
             _active = false;
             _elapsedSeconds = 0;
+            _currentTurnElapsedSeconds = 0;
+            _damageEventSequence = 0;
             _currentTurn = 1;
         }
     }
@@ -58,6 +62,8 @@ public static class DpsStats
             PendingDoomKills.Clear();
             _active = true;
             _elapsedSeconds = 0;
+            _currentTurnElapsedSeconds = 0;
+            _damageEventSequence = 0;
             _currentTurn = 1;
 
             if (players is null)
@@ -90,7 +96,9 @@ public static class DpsStats
     {
         lock (SyncRoot)
         {
-            _currentTurn = Math.Max(1, roundNumber);
+            var turn = Math.Max(1, roundNumber);
+            if (_currentTurn != turn) _currentTurnElapsedSeconds = 0;
+            _currentTurn = turn;
         }
     }
 
@@ -106,6 +114,7 @@ public static class DpsStats
             if (_active)
             {
                 _elapsedSeconds += delta;
+                _currentTurnElapsedSeconds += delta;
             }
         }
     }
@@ -344,9 +353,11 @@ public static class DpsStats
                 return false;
             }
 
+            // 同一伤害事件的多人份额使用同一序号，避免分配遍历顺序变成触发先后。
+            var sequence = ++_damageEventSequence;
             foreach (var allocation in allocations)
             {
-                RecordDamageAllocation(allocation, attribution);
+                RecordDamageAllocation(allocation, attribution, sequence);
             }
         }
 
@@ -355,7 +366,8 @@ public static class DpsStats
 
     private static void RecordDamageAllocation(
         DamageAllocation allocation,
-        DamageAttribution attribution)
+        DamageAttribution attribution,
+        long sequence)
     {
         var stats = GetOrCreatePlayer(allocation.Player);
         var damage = allocation.Damage;
@@ -377,7 +389,8 @@ public static class DpsStats
             damage,
             allocation.BlockedDamage,
             allocation.UnblockedDamage,
-            allocation.OverkillDamage);
+            allocation.OverkillDamage,
+            sequence);
 
         switch (attribution.Category)
         {
@@ -396,15 +409,17 @@ public static class DpsStats
 
                 stats.DamageByTurn[_currentTurn] =
                     stats.DamageByTurn.GetValueOrDefault(_currentTurn) + damage;
-                AddOutputBreakdown(stats, attribution, allocation, _currentTurn);
+                AddOutputBreakdown(stats, attribution, allocation, _currentTurn, sequence);
                 break;
             case DamageCategory.Incoming:
+                stats.IncomingLastSequenceByTurn[_currentTurn] = sequence;
                 stats.IncomingDamage += damage;
                 stats.IncomingHits++;
                 stats.IncomingDamageByTurn[_currentTurn] =
                     stats.IncomingDamageByTurn.GetValueOrDefault(_currentTurn) + damage;
                 break;
             case DamageCategory.SelfLoss:
+                stats.SelfLossLastSequenceByTurn[_currentTurn] = sequence;
                 stats.SelfLossDamage += damage;
                 stats.SelfLossHits++;
                 stats.SelfLossDamageByTurn[_currentTurn] =
@@ -566,7 +581,7 @@ public static class DpsStats
                     BuildTurnSnapshots(player)))
                 .ToArray();
 
-            return new CombatStatsSnapshot(_active, _elapsedSeconds, _currentTurn, players);
+            return new CombatStatsSnapshot(_active, _elapsedSeconds, _currentTurn, players, _currentTurnElapsedSeconds);
         }
     }
 
@@ -673,7 +688,9 @@ public static class DpsStats
                         .OrderByDescending(mechanism => mechanism.Damage)
                         .Select(mechanism => mechanism.ToSnapshot())
                         .ToArray()
-                    : Array.Empty<MechanismDamageSnapshot>()))
+                    : Array.Empty<MechanismDamageSnapshot>(),
+                player.IncomingLastSequenceByTurn.GetValueOrDefault(turn),
+                player.SelfLossLastSequenceByTurn.GetValueOrDefault(turn)))
             .ToArray();
     }
 
@@ -681,7 +698,8 @@ public static class DpsStats
         PlayerAccumulator player,
         DamageAttribution attribution,
         DamageAllocation allocation,
-        int turn)
+        int turn,
+        long sequence)
     {
         var identity = ResolveOutputGroupIdentity(attribution);
 
@@ -701,7 +719,8 @@ public static class DpsStats
             allocation.Damage,
             allocation.BlockedDamage,
             allocation.UnblockedDamage,
-            allocation.OverkillDamage);
+            allocation.OverkillDamage,
+            sequence);
 
         if (!player.DamageByMechanismByTurn.TryGetValue(turn, out var mechanisms))
         {
@@ -719,7 +738,8 @@ public static class DpsStats
             allocation.Damage,
             allocation.BlockedDamage,
             allocation.UnblockedDamage,
-            allocation.OverkillDamage);
+            allocation.OverkillDamage,
+            sequence);
     }
 
     private static OutputGroupIdentity ResolveOutputGroupIdentity(DamageAttribution attribution)
@@ -977,6 +997,10 @@ public static class DpsStats
 
         public Dictionary<int, long> SelfLossDamageByTurn { get; } = new();
 
+        public Dictionary<int, long> IncomingLastSequenceByTurn { get; } = new();
+
+        public Dictionary<int, long> SelfLossLastSequenceByTurn { get; } = new();
+
         public Dictionary<int, Dictionary<string, CardDamageAccumulator>> CardsByTurn { get; } = new();
 
         public Dictionary<int, Dictionary<DamageMechanismKind, MechanismAccumulator>> DamageByMechanismByTurn { get; } = new();
@@ -1046,6 +1070,8 @@ public static class DpsStats
 
         public long MaxHit { get; private set; }
 
+        public long LastTriggerSequence { get; private set; }
+
         public void Add(long damage, DamageResult result)
         {
             Add(damage, result.BlockedDamage, result.UnblockedDamage, result.OverkillDamage);
@@ -1053,6 +1079,12 @@ public static class DpsStats
 
         public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
         {
+            Add(damage, blockedDamage, unblockedDamage, overkillDamage, 0);
+        }
+
+        public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage, long sequence)
+        {
+            LastTriggerSequence = Math.Max(LastTriggerSequence, sequence);
             MaxHit = Math.Max(MaxHit, damage);
             Damage += damage;
             BlockedDamage += blockedDamage;
@@ -1078,7 +1110,8 @@ public static class DpsStats
                 BlockedDamage,
                 UnblockedDamage,
                 OverkillDamage,
-                MaxHit);
+                MaxHit,
+                LastTriggerSequence);
         }
     }
 
@@ -1103,6 +1136,8 @@ public static class DpsStats
 
         public long MaxHit { get; private set; }
 
+        public long LastTriggerSequence { get; private set; }
+
         public void Add(long damage, DamageResult result)
         {
             Add(damage, result.BlockedDamage, result.UnblockedDamage, result.OverkillDamage);
@@ -1110,6 +1145,12 @@ public static class DpsStats
 
         public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
         {
+            Add(damage, blockedDamage, unblockedDamage, overkillDamage, 0);
+        }
+
+        public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage, long sequence)
+        {
+            LastTriggerSequence = Math.Max(LastTriggerSequence, sequence);
             MaxHit = Math.Max(MaxHit, damage);
             Damage += damage;
             BlockedDamage += blockedDamage;
@@ -1127,7 +1168,8 @@ public static class DpsStats
                 BlockedDamage,
                 UnblockedDamage,
                 OverkillDamage,
-                MaxHit);
+                MaxHit,
+                LastTriggerSequence);
         }
     }
 
@@ -1150,6 +1192,8 @@ public static class DpsStats
 
         public long MaxHit { get; private set; }
 
+        public long LastTriggerSequence { get; private set; }
+
         public int Hits { get; private set; }
 
         public void Add(long damage, DamageResult result)
@@ -1159,6 +1203,12 @@ public static class DpsStats
 
         public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage)
         {
+            Add(damage, blockedDamage, unblockedDamage, overkillDamage, 0);
+        }
+
+        public void Add(long damage, long blockedDamage, long unblockedDamage, long overkillDamage, long sequence)
+        {
+            LastTriggerSequence = Math.Max(LastTriggerSequence, sequence);
             MaxHit = Math.Max(MaxHit, damage);
             Damage += damage;
             BlockedDamage += blockedDamage;
@@ -1186,7 +1236,8 @@ public static class DpsStats
                 BlockedDamage,
                 UnblockedDamage,
                 OverkillDamage,
-                MaxHit);
+                MaxHit,
+                LastTriggerSequence);
         }
     }
 }

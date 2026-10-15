@@ -29,12 +29,8 @@ public static partial class DpsMeterUi
                 changed = true;
             }
             var data = view.Sections.Count > 0 ? view.Sections[index] : null;
-            var rows = data?.Rows
-                .Where(row => data.KeepZeroRows || row.Damage > 0)
-                .OrderByDescending(row => row.Damage)
-                .ThenBy(row => row.Label, StringComparer.Ordinal)
-                .Take(settings.MaxRows)
-                .ToArray() ?? Array.Empty<DamageRowData>();
+            var rows = data is null ? Array.Empty<DamageRowData>() : DpsHudSorting.VisibleRows(
+                data.Rows, data.Total, data.KeepZeroRows, settings.SortMode, settings.MaxRows);
             if (rows.Length == 0) rows = new[] { new DamageRowData(L("暂无记录", "No records"), 0) };
             changed |= SectionPool[index].Update(data?.Heading, rows, data?.Total ?? 0,
                 settings, fields, language, ActiveRows);

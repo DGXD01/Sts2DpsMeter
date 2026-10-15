@@ -19,7 +19,8 @@ public sealed record SourceStatsSnapshot(
     long BlockedDamage,
     long UnblockedDamage,
     long OverkillDamage,
-    long MaxHit = 0);
+    long MaxHit = 0,
+    long LastTriggerSequence = 0);
 
 public sealed record CardDamageSnapshot(
     string GroupId,
@@ -36,7 +37,8 @@ public sealed record CardDamageSnapshot(
     long BlockedDamage,
     long UnblockedDamage,
     long OverkillDamage,
-    long MaxHit = 0);
+    long MaxHit = 0,
+    long LastTriggerSequence = 0);
 
 public sealed record MechanismDamageSnapshot(
     DamageMechanismKind Mechanism,
@@ -45,7 +47,8 @@ public sealed record MechanismDamageSnapshot(
     long BlockedDamage,
     long UnblockedDamage,
     long OverkillDamage,
-    long MaxHit = 0);
+    long MaxHit = 0,
+    long LastTriggerSequence = 0);
 
 public sealed record TurnStatsSnapshot(
     int Turn,
@@ -59,7 +62,9 @@ public sealed record TurnStatsSnapshot(
     long IncomingDamage,
     long SelfLossDamage,
     IReadOnlyList<CardDamageSnapshot> Cards,
-    IReadOnlyList<MechanismDamageSnapshot> Mechanisms);
+    IReadOnlyList<MechanismDamageSnapshot> Mechanisms,
+    long IncomingLastTriggerSequence = 0,
+    long SelfLossLastTriggerSequence = 0);
 
 public sealed record PlayerStatsSnapshot(
     ulong PlayerNetId,
@@ -97,4 +102,5 @@ public sealed record CombatStatsSnapshot(
     bool IsActive,
     double ElapsedSeconds,
     int CurrentTurn,
-    IReadOnlyList<PlayerStatsSnapshot> Players);
+    IReadOnlyList<PlayerStatsSnapshot> Players,
+    double CurrentTurnElapsedSeconds = 0);

@@ -1,0 +1,253 @@
+using System;
+using System.Collections;
+using System.Globalization;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using Sts2DpsMeter;
+
+internal static class StageThreeChecks
+{
+    private const BindingFlags PrivateStatic = BindingFlags.Static | BindingFlags.NonPublic;
+
+    private static void Require(bool result, string message)
+    {
+        if (!result) throw new InvalidOperationException(message);
+    }
+
+    public static void Run()
+    {
+        CheckSummaryAndSettings();
+        CheckSorting();
+        CheckRealViews();
+        CheckRecentAndTiming();
+    }
+
+    private static PlayerStatsSnapshot Player()
+    {
+        var card = new CardDamageSnapshot("strike", "", "strike", DamageSourceType.Card,
+            SourceTrackingStatus.Tracked, null, null, null, null, 3, 30, 0, 30, 0, 12, 7);
+        var turn = new TurnStatsSnapshot(2, 30, 0, 0, 0, 0, 0, 0, 4, 1,
+            new[] { card }, Array.Empty<MechanismDamageSnapshot>(), 5, 6);
+        var source = new SourceStatsSnapshot("", 100, "strike", DamageSourceType.Card, DamageCategory.Output,
+            AttributionConfidence.Exact, DamageMechanismKind.DirectAttack, SourceTrackingStatus.Tracked,
+            null, null, null, null, 5, 0, 100, 0, 25, 7);
+        return new PlayerStatsSnapshot(1, "", "", "", "FFFFFF", true, 100, 0, 0, 0, 0, 0, 0,
+            5, 25, "", 10, 50, 100, 0, 100, 0, 10, 2, 2, 1,
+            new[] { source }, Array.Empty<SourceStatsSnapshot>(), Array.Empty<SourceStatsSnapshot>(), new[] { turn });
+    }
+
+    private static void CheckSummaryAndSettings()
+    {
+        var player = Player();
+        var other = player with { PlayerNetId = 2, TotalDamage = 60, HitCount = 2, IncomingDamage = 5, SelfLossDamage = 0 };
+        var snapshot = new CombatStatsSnapshot(true, 10, 2, new[] { player, other }, 4);
+        Require(DpsHudSummary.Values(snapshot, player, HudScope.Combat) == new HudSummaryValues(100, 12, 5, 2, 10, 50),
+            "本场摘要应使用当前玩家全场数据、全场秒数及战斗回合数");
+        Require(DpsHudSummary.Values(snapshot, player, HudScope.Turn) == new HudSummaryValues(30, 5, 3, 2, 7.5, 30),
+            "本回合摘要不能使用全场伤害/命中/秒数，DPT 分母为一个回合");
+        Require(DpsHudSummary.Values(snapshot, null, HudScope.Team) == new HudSummaryValues(160, 17, 7, 2, 16, 80),
+            "全队 DPS/DPT 必须以全队伤害除以共享战斗秒数/回合数，不能平均玩家比率");
+        var emptyTurn = DpsHudSummary.Values(snapshot with { CurrentTurn = 3 }, player, HudScope.Turn);
+        Require(emptyTurn.Damage == 0 && emptyTurn.Hits == 0 && emptyTurn.Taken == 0, "空回合不能借用全场数据");
+        foreach (var seconds in new[] { 0d, -1d, double.NaN, double.PositiveInfinity })
+            Require(DpsHudSummary.Values(snapshot with { ElapsedSeconds = seconds }, player, HudScope.Combat).Dps == 0,
+                "零秒和无效耗时不能产生 Infinity/NaN");
+        var normalize = typeof(DpsMeterSettings).GetMethod("Normalize", PrivateStatic)!;
+        var clone = typeof(DpsMeterSettings).GetMethod("Clone", PrivateStatic)!;
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
+        var previousCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("de-DE");
+            for (var mask = 0; mask < 64; mask++)
+            {
+                var settings = new DpsMeterSettingsData
+                {
+                    SummaryDamage = (mask & 1) != 0, SummaryDps = (mask & 2) != 0, SummaryDpt = (mask & 4) != 0,
+                    SummaryTaken = (mask & 8) != 0, SummaryTurn = (mask & 16) != 0, SummaryHits = (mask & 32) != 0,
+                    SortMode = HudSortMode.Recent, UiScale = 1.25f, ShowSourceIcons = false
+                };
+                normalize.Invoke(null, new object[] { settings });
+                Require(DpsHudSummary.SelectedCount(settings) <= 3, "标题必须限制最多三项");
+                var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(
+                    JsonSerializer.Serialize(clone.Invoke(null, new object[] { settings }), options), options)!;
+                Require(JsonSerializer.Serialize(settings, options) == JsonSerializer.Serialize(restored, options),
+                    "新摘要和排序设置必须通过真实 Clone 与 JSON 保存/恢复，不能改变已有值");
+                foreach (var chinese in new[] { false, true })
+                {
+                    var title = DpsHudSummary.Title(restored, new HudSummaryValues(100, 12, 5, 2, 7.5, 50),
+                        HudScope.Combat, false, null, chinese);
+                    Require(title.StartsWith(chinese ? "本场战斗" : "This Combat") &&
+                        title.Split(" · ").Length <= 4 && !title.Contains("7,5"), "标题应双语、限定字段数并使用稳定数值格式");
+                    Require(title.Contains(chinese ? "伤害 100" : "Damage 100") == restored.SummaryDamage &&
+                        title.Contains("7.5 DPS") == restored.SummaryDps && title.Contains("50.0 DPT") == restored.SummaryDpt &&
+                        title.Contains(chinese ? "承伤 12" : "Taken 12") == restored.SummaryTaken &&
+                        title.Contains(chinese ? "回合 2" : "Turn 2") == restored.SummaryTurn &&
+                        title.Contains(chinese ? "命中 5" : "Hits 5") == restored.SummaryHits,
+                        "每项开关必须只显示对应的真实指标");
+                    if (mask == 0) Require(title == (chinese ? "本场战斗" : "This Combat"), "摘要全关只保留范围，不能伪造 0");
+                }
+            }
+        }
+        finally { CultureInfo.CurrentCulture = previousCulture; }
+        var legacy = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":4,\"maxRows\":9,\"sortMode\":999}", options)!;
+        normalize.Invoke(null, new object[] { legacy });
+        Require(legacy.SchemaVersion == 5 && legacy.MaxRows == 9 && legacy.SummaryDamage &&
+            DpsHudSummary.SelectedCount(legacy) == 1 && legacy.SortMode == HudSortMode.Damage,
+            "旧配置应保留已有值并补充默认摘要，无效排序回退伤害降序");
+        Console.WriteLine("通过：三种范围摘要、空回合/零耗时、64 种标题组合、中英文和实际配置克隆/JSON 兼容");
+    }
+
+    private static void CheckSorting()
+    {
+        var rows = new[]
+        {
+            new DamageRowData("Z", 100, Info: new HudSourceInfo(Hits: 1, MaxHit: 5, LastTriggerSequence: 4), Key: "z"),
+            new DamageRowData("A", 10, Info: new HudSourceInfo(Hits: 8, MaxHit: 9, LastTriggerSequence: 7), Key: "a"),
+            new DamageRowData("B", 20, Info: new HudSourceInfo(Hits: 3, MaxHit: 20, LastTriggerSequence: 2), Key: "b")
+        };
+        var expected = new[] { "ZBA", "ZBA", "ABZ", "BAZ", "ABZ", "AZB" };
+        var frozen = rows.ToArray();
+        foreach (var mode in Enum.GetValues<HudSortMode>())
+        {
+            for (var limit = 1; limit <= 3; limit++)
+            {
+                var visible = DpsHudSorting.VisibleRows(rows, 130, false, mode, limit);
+                Require(string.Concat(visible.Select(row => row.Label)) == expected[(int)mode][..limit],
+                    $"{mode} 必须先在全部行上排序再截取 MaxRows");
+                Require(rows.SequenceEqual(frozen) && rows.Sum(row => row.Damage) == 130, "排序不能改动原始行、统计总量或份额分母");
+            }
+            var tied = new[] { rows[0] with { Label = "同名", Key = "b" }, rows[0] with { Label = "同名", Key = "a" } };
+            Require(DpsHudSorting.VisibleRows(tied, 200, false, mode, 2).Select(row => row.Key).SequenceEqual(new[] { "a", "b" }) &&
+                DpsHudSorting.VisibleRows(tied.Reverse(), 200, false, mode, 2).Select(row => row.Key).SequenceEqual(new[] { "a", "b" }),
+                "同值同名来源必须使用稳定身份键，不能随输入/字典顺序抖动");
+        }
+        var missing = rows.Append(new DamageRowData("0_missing", 1)).ToArray();
+        foreach (var mode in new[] { HudSortMode.Hits, HudSortMode.MaxHit, HudSortMode.Recent })
+            Require(DpsHudSorting.VisibleRows(missing, 131, false, mode, 12).Last().Label == "0_missing", "缺失指标应在有效指标之后");
+        Require(DpsHudSorting.VisibleRows(rows.Append(new DamageRowData("0_zero", 0)), 130, false, HudSortMode.Name, 12).Length == 3 &&
+            DpsHudSorting.VisibleRows(rows.Append(new DamageRowData("0_zero", 0)), 130, true, HudSortMode.Name, 12).Length == 4,
+            "保留辅助零值行与过滤伤害空行必须沿用原行为");
+        Require(string.Concat(DpsHudSorting.VisibleRows(rows, 0, false, HudSortMode.Percentage, 12).Select(row => row.Label)) == "ABZ",
+            "零分母时百分比均为零，应稳定按名称排序");
+        Require(DpsHudSorting.VisibleRows(rows, 130, false, (HudSortMode)999, 1)[0].Label == "Z", "非法排序安全回退");
+        Console.WriteLine("通过：六种实际排序、先排序后截断、同值同名稳定性、缺失指标、零值/零分母及统计不变性");
+    }
+
+    private static void CheckRealViews()
+    {
+        Require(DpsHudScope.Count(0) == 2 && DpsHudScope.Count(1) == 2 && DpsHudScope.Count(2) == 3 &&
+            DpsHudScope.Normalize(HudScope.Team, 1) == HudScope.Combat &&
+            DpsHudScope.Normalize((HudScope)99, 2) == HudScope.Combat &&
+            DpsHudScope.Label(HudScope.Team, false) == "Team" && DpsHudScope.Label(HudScope.Team, true) == "全队",
+            "单人不可出现重复的全队档位，非法或多人退回单人范围须回退本场");
+        var scope = typeof(DpsMeterUi).GetField("_scopeIndex", PrivateStatic)!;
+        var selected = typeof(DpsMeterUi).GetField("_selectedPlayerIndex", PrivateStatic)!;
+        var build = typeof(DpsMeterUi).GetMethod("BuildDamageView", PrivateStatic)!;
+        var player = Player();
+        var settings = new DpsMeterSettingsData { ShowTakenBreakdown = false };
+        object View(HudScope target, CombatStatsSnapshot snapshot)
+        {
+            scope.SetValue(null, (int)target);
+            selected.SetValue(null, 0);
+            return build.Invoke(null, new object[] { settings, snapshot })!;
+        }
+        string Title(object view) => (string)view.GetType().GetProperty("Title")!.GetValue(view)!;
+        object[] Sections(object view) => ((IEnumerable)view.GetType().GetProperty("Sections")!.GetValue(view)!).Cast<object>().ToArray();
+        long Total(object section) => (long)section.GetType().GetProperty("Total")!.GetValue(section)!;
+        var single = new CombatStatsSnapshot(true, 10, 2, new[] { player }, 4);
+        var combat = View(HudScope.Team, single);
+        Require((int)scope.GetValue(null)! == 0 && Total(Sections(combat)[0]) == 100 && Title(combat).Contains("100"),
+            "真实视图入口应清理单人旧第三档，并显示本场数据");
+        var turn = View(HudScope.Turn, single);
+        Require(Total(Sections(turn)[0]) == 30 && Title(turn).Contains("30"), "真实本回合标题与模块数据口径必须一致");
+        settings.ShowTakenBreakdown = true;
+        var takenView = View(HudScope.Turn, single);
+        var takenSection = Sections(takenView)[1];
+        var takenRows = (System.Collections.Generic.IReadOnlyList<DamageRowData>)takenSection.GetType().GetProperty("Rows")!.GetValue(takenSection)!;
+        Require(DpsHudSorting.VisibleRows(takenRows, 5, true, HudSortMode.Recent, 1).Single().Info?.SourceType == DamageSourceType.Self,
+            "真实本回合承伤来源行必须使用当前回合最新事件顺序");
+        settings.ShowTakenBreakdown = false;
+        var team = View(HudScope.Team, single with { Players = new[] { player, player with { PlayerNetId = 2, TotalDamage = 60 } } });
+        Require(Total(Sections(team)[0]) == 160 && Title(team).StartsWith("Team") && !Title(team).Contains("Total"),
+            "全队入口应汇总当前战斗并明确命名 Team");
+        settings.ShowDealtBreakdown = false;
+        Require(Title(View(HudScope.Combat, single)).Contains("100"), "标题摘要必须独立于统计模块开关");
+        var empty = View(HudScope.Team, single with { Players = Array.Empty<PlayerStatsSnapshot>() });
+        Require(Sections(empty).Length == 0 && Title(empty).Contains("0"), "无玩家数据和旧范围不得异常或沿用旧数据");
+        scope.SetValue(null, 0);
+        selected.SetValue(null, 0);
+        Console.WriteLine("通过：真实 HUD 视图入口的本场/本回合/全队数据、单人旧范围回退及摘要独立于模块");
+    }
+
+    private static void CheckRecentAndTiming()
+    {
+        DpsStats.ResetRun();
+        DpsStats.Tick(2);
+        Require(DpsStats.GetSnapshot().CurrentTurnElapsedSeconds == 0, "非战斗期不得累计回合耗时");
+        DpsStats.BeginCombat();
+        DpsStats.Tick(2);
+        DpsStats.SetTurn(1);
+        DpsStats.Tick(3);
+        var first = DpsStats.GetSnapshot();
+        DpsStats.SetTurn(2);
+        DpsStats.Tick(4);
+        var second = DpsStats.GetSnapshot();
+        Require(first.ElapsedSeconds == 5 && first.CurrentTurnElapsedSeconds == 5 &&
+            second.ElapsedSeconds == 9 && second.CurrentTurnElapsedSeconds == 4, "重复回合通知不能清空计时，新回合只重置回合计时");
+        DpsStats.EndCombat();
+        DpsStats.Tick(100);
+        var ended = DpsStats.GetSnapshot();
+        Require(!ended.IsActive && ended.ElapsedSeconds == 9 && ended.CurrentTurnElapsedSeconds == 4 &&
+            first.ElapsedSeconds == 5 && first.CurrentTurnElapsedSeconds == 5,
+            "战斗结束必须停止全场和本回合计时");
+        typeof(DpsStats).GetField("_damageEventSequence", PrivateStatic)!.SetValue(null, 99L);
+        DpsStats.BeginCombat();
+        Require(DpsStats.GetSnapshot().ElapsedSeconds == 0 && DpsStats.GetSnapshot().CurrentTurnElapsedSeconds == 0,
+            "新战斗不能保留上场耗时");
+        Require((long)typeof(DpsStats).GetField("_damageEventSequence", PrivateStatic)!.GetValue(null)! == 0,
+            "新战斗必须重置上场事件序号");
+        var attribution = new DamageAttribution("", "strike", DamageSourceType.Card, DamageCategory.Output,
+            AttributionConfidence.Exact, DamageMechanismKind.DirectAttack, SourceTrackingStatus.Tracked, null, null, null, null, null);
+        var flags = BindingFlags.NonPublic;
+        var identity = Activator.CreateInstance(typeof(DpsStats).GetNestedType("OutputGroupIdentity", flags)!, new object[] { "strike", "", "strike" })!;
+        var accumulators = new[]
+        {
+            Activator.CreateInstance(typeof(DpsStats).GetNestedType("SourceAccumulator", flags)!, new object[] { attribution })!,
+            Activator.CreateInstance(typeof(DpsStats).GetNestedType("CardDamageAccumulator", flags)!, new[] { identity, attribution })!,
+            Activator.CreateInstance(typeof(DpsStats).GetNestedType("MechanismAccumulator", flags)!, new object[] { DamageMechanismKind.DirectAttack })!
+        };
+        foreach (var accumulator in accumulators)
+        {
+            var type = accumulator.GetType();
+            var add = type.GetMethod("Add", Enumerable.Repeat(typeof(long), 5).ToArray())!;
+            object Snapshot() => type.GetMethod("ToSnapshot")!.Invoke(accumulator, null)!;
+            long Read(object value, string property) => Convert.ToInt64(value.GetType().GetProperty(property)!.GetValue(value));
+            add.Invoke(accumulator, new object[] { 12L, 2L, 10L, 0L, 7L });
+            var frozen = Snapshot();
+            add.Invoke(accumulator, new object[] { 30L, 5L, 20L, 5L, 9L });
+            var latest = Snapshot();
+            Require(Read(frozen, "LastTriggerSequence") == 7 && Read(latest, "LastTriggerSequence") == 9 &&
+                Read(latest, "Damage") == 42 && Read(latest, "Hits") == 2 && Read(latest, "MaxHit") == 30,
+                "新增触发序号不能改动累计结果或先前快照");
+        }
+        var source = Player().Sources[0];
+        Require(DpsHudSourceInfo.FromSources(new[] { source, source with { LastTriggerSequence = 12 } }).LastTriggerSequence == 12 &&
+            DpsHudSourceInfo.FromCards(Player().Turns[0].Cards).LastTriggerSequence == 7 &&
+            DpsHudSourceInfo.Latest(new[] { 0L }) is null, "合并来源应取最新事件，缺失记录不能伪造时间");
+        var playerType = typeof(DpsStats).GetNestedType("PlayerAccumulator", flags)!;
+        var accumulatorPlayer = Activator.CreateInstance(playerType, new object[] { 1UL, "" })!;
+        void Put(string name, long value) => ((IDictionary)playerType.GetProperty(name)!.GetValue(accumulatorPlayer)!).Add(2, value);
+        Put("IncomingDamageByTurn", 10); Put("SelfLossDamageByTurn", 2);
+        Put("IncomingLastSequenceByTurn", 7); Put("SelfLossLastSequenceByTurn", 9);
+        var turns = (System.Collections.Generic.IReadOnlyList<TurnStatsSnapshot>)typeof(DpsStats)
+            .GetMethod("BuildTurnSnapshots", PrivateStatic)!.Invoke(null, new[] { accumulatorPlayer })!;
+        Require(turns.Single().IncomingLastTriggerSequence == 7 && turns.Single().SelfLossLastTriggerSequence == 9,
+            "真实回合快照必须暴露该回合的承伤与自损触发顺序");
+        DpsStats.ResetRun();
+        Require((long)typeof(DpsStats).GetField("_damageEventSequence", PrivateStatic)!.GetValue(null)! == 0,
+            "战斗事件序号必须在生命周期重置时清空");
+        Console.WriteLine("通过：真实战斗/回合计时边界、三类累加器触发顺序及快照不变性、合并和承伤回合元数据");
+    }
+}

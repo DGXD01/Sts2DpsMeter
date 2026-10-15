@@ -13,6 +13,7 @@ $modPath = (Resolve-Path -LiteralPath $ModDll).Path
 $godotPath = (Resolve-Path -LiteralPath (Join-Path $gameData 'GodotSharp.dll')).Path
 $workPath = [IO.Path]::GetFullPath($WorkDir)
 $sourcePath = Join-Path $PSScriptRoot 'hud-refresh-checks\Program.cs.txt'
+$stageThreeSourcePath = Join-Path $PSScriptRoot 'hud-refresh-checks\StageThreeChecks.cs.txt'
 New-Item -ItemType Directory -Path $workPath -Force | Out-Null
 
 function Escape-Xml([string]$Value) {
@@ -33,6 +34,7 @@ $project = @"
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="$(Escape-Xml $sourcePath)" />
+    <Compile Include="$(Escape-Xml $stageThreeSourcePath)" />
     <Reference Include="Sts2DpsMeter"><HintPath>$(Escape-Xml $modPath)</HintPath></Reference>
     <Reference Include="GodotSharp"><HintPath>$(Escape-Xml $godotPath)</HintPath></Reference>
     <Reference Include="sts2"><HintPath>$(Escape-Xml (Join-Path $gameData 'sts2.dll'))</HintPath></Reference>

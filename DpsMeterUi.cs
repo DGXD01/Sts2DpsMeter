@@ -12,8 +12,7 @@ public static partial class DpsMeterUi
     private const float MinimumPanelWidth = DpsHudLayout.PreferredWidth;
     private const float MinimumPanelHeight = 1f;
     private const int ScopeCombat = 0;
-    private const int ScopeTurn = 1;
-    private const int ScopeTotal = 2;
+    private const int ScopeTeam = 2;
 
     private static readonly Color PanelBackground = new(0f, 0f, 0f, 0.92f);
     private static readonly Color PanelBorder = new(0.92f, 0.95f, 1f, 0.88f);
@@ -148,7 +147,7 @@ public static partial class DpsMeterUi
         _panel.Scale = new Vector2(settings.UiScale, settings.UiScale);
         _panel.PivotOffset = Vector2.Zero;
         ApplyPanelStyle(settings);
-        NormalizeScopeSelection();
+        var scopeChanged = NormalizeScopeSelection(snapshot.Players.Count);
         _contentDivider!.Visible = !_contentCollapsed;
         _contentScroll!.Visible = !_contentCollapsed;
         UpdateCollapseButton();
@@ -167,7 +166,7 @@ public static partial class DpsMeterUi
             language, settings.CompactMode,
             settings.UiScale, settings.PositionX, settings.PositionY,
             _contentCollapsed, GetViewportSize());
-        if (contentChanged || navigationChanged || layoutState != _lastLayoutState)
+        if (contentChanged || navigationChanged || scopeChanged || layoutState != _lastLayoutState)
         {
             _lastLayoutState = layoutState;
             FitPanelToContent(settings);
@@ -198,38 +197,42 @@ public static partial class DpsMeterUi
         CombatStatsSnapshot snapshot)
     {
         var isMultiplayer = snapshot.Players.Count > 1;
-        if (!HasEnabledModules(settings, isMultiplayer))
+        var scope = DpsHudScope.Normalize((HudScope)_scopeIndex, snapshot.Players.Count);
+        _scopeIndex = (int)scope;
+        _selectedPlayerIndex = Math.Clamp(_selectedPlayerIndex, 0, Math.Max(0, snapshot.Players.Count - 1));
+        var player = snapshot.Players.Count > 0 ? snapshot.Players[_selectedPlayerIndex] : null;
+        DamageViewData view;
+        if (player is null)
         {
-            return new DamageViewData(L("未启用统计模块", "No statistics modules enabled"), Array.Empty<DamageSectionData>());
+            view = new DamageViewData(string.Empty, Array.Empty<DamageSectionData>());
         }
-
-        if (snapshot.Players.Count == 0)
+        else if (!HasEnabledModules(settings, isMultiplayer))
         {
-            return new DamageViewData(L("暂无记录", "No records"), Array.Empty<DamageSectionData>());
+            view = new DamageViewData(string.Empty, new[] { new DamageSectionData(
+                L("未启用统计模块", "No statistics modules enabled"), 0, Array.Empty<DamageRowData>()) });
         }
-
-        _selectedPlayerIndex = Math.Clamp(_selectedPlayerIndex, 0, snapshot.Players.Count - 1);
-        var player = snapshot.Players[_selectedPlayerIndex];
-
-        if (_scopeIndex == ScopeTotal)
+        else
         {
-            return BuildTotalView(settings, snapshot, isMultiplayer);
+            view = scope switch
+            {
+                HudScope.Team => BuildTeamView(settings, snapshot),
+                HudScope.Turn => BuildTurnView(settings, player, snapshot.CurrentTurn, isMultiplayer),
+                _ => BuildCombatView(settings, player, isMultiplayer)
+            };
         }
-
-        return _scopeIndex == ScopeTurn
-            ? BuildTurnView(settings, player, snapshot.CurrentTurn, isMultiplayer)
-            : BuildCombatView(settings, player, isMultiplayer);
+        return view with
+        {
+            Title = DpsHudSummary.Title(settings, DpsHudSummary.Values(snapshot, player, scope),
+            scope, isMultiplayer, LocalizeKnownValue(player?.DisplayName), DpsLocalization.IsChinese)
+        };
     }
 
     private static DamageViewData BuildCombatView(
         DpsMeterSettingsData settings,
         PlayerStatsSnapshot player,
-        bool isMultiplayer,
-        string? scopeLabel = null)
+        bool isMultiplayer)
     {
-        scopeLabel ??= L("本场战斗", "This Combat");
         var sections = new List<DamageSectionData>();
-        var titleParts = new List<string>();
         var takenDamage = player.IncomingDamage + player.SelfLossDamage;
 
         if (settings.ShowDealtBreakdown)
@@ -238,7 +241,6 @@ public static partial class DpsMeterUi
                 L("造成伤害", "Damage Dealt"),
                 player.TotalDamage,
                 BuildCurrentRows(player)));
-            titleParts.Add($"{L("伤害", "Damage")} {player.TotalDamage}");
         }
 
         if (settings.ShowTakenBreakdown)
@@ -247,7 +249,6 @@ public static partial class DpsMeterUi
                 L("受到伤害", "Damage Taken"),
                 takenDamage,
                 BuildTakenRows(player)));
-            titleParts.Add($"{L("承伤", "Taken")} {takenDamage}");
         }
 
         if (settings.ShowBlockGained)
@@ -257,7 +258,6 @@ public static partial class DpsMeterUi
                 player.BlockGained,
                 BuildMetricRows(L("格挡获得", "Block Gained"), player.BlockGained),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("格挡", "Block")} {player.BlockGained}");
         }
 
         if (settings.ShowEnergySpent)
@@ -267,7 +267,6 @@ public static partial class DpsMeterUi
                 player.EnergySpent,
                 BuildMetricRows(L("消耗能量", "Energy Spent"), player.EnergySpent),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("能量", "Energy")} {player.EnergySpent}");
         }
 
         if (isMultiplayer && settings.ShowEnergyGivenToAllies)
@@ -279,7 +278,6 @@ public static partial class DpsMeterUi
                     L("给予队友能量", "Energy Given to Allies"),
                     player.EnergyGivenToAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友能量", "Ally Energy")} {player.EnergyGivenToAllies}");
         }
 
         if (isMultiplayer && settings.ShowBlockGivenToAllies)
@@ -291,7 +289,6 @@ public static partial class DpsMeterUi
                     L("给予队友护盾", "Block Given to Allies"),
                     player.BlockGivenToAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友护盾", "Ally Block")} {player.BlockGivenToAllies}");
         }
 
         if (isMultiplayer && settings.ShowHealingGivenToAllies)
@@ -303,7 +300,6 @@ public static partial class DpsMeterUi
                     L("给予队友回血", "Healing Given to Allies"),
                     player.HealingGivenToAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友回血", "Ally Healing")} {player.HealingGivenToAllies}");
         }
 
         if (isMultiplayer && settings.ShowCardsDrawnForAllies)
@@ -315,12 +311,9 @@ public static partial class DpsMeterUi
                     L("为队友抽牌", "Cards Drawn for Allies"),
                     player.CardsDrawnForAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友抽牌", "Ally Draw")} {player.CardsDrawnForAllies}");
         }
 
-        return new DamageViewData(
-            BuildTitle(scopeLabel, isMultiplayer, LocalizeKnownValue(player.DisplayName), titleParts),
-            sections);
+        return new DamageViewData(string.Empty, sections);
     }
 
     private static DamageViewData BuildTurnView(
@@ -331,7 +324,6 @@ public static partial class DpsMeterUi
     {
         var turn = player.Turns.FirstOrDefault(item => item.Turn == currentTurn);
         var sections = new List<DamageSectionData>();
-        var titleParts = new List<string>();
         var damage = turn?.Damage ?? 0;
         var blockGained = turn?.BlockGained ?? 0;
         var energySpent = turn?.EnergySpent ?? 0;
@@ -347,7 +339,6 @@ public static partial class DpsMeterUi
                 L("造成伤害", "Damage Dealt"),
                 damage,
                 BuildTurnRows(turn)));
-            titleParts.Add($"{L("伤害", "Damage")} {damage}");
         }
 
         if (settings.ShowTakenBreakdown)
@@ -357,7 +348,6 @@ public static partial class DpsMeterUi
                 takenDamage,
                 BuildTurnTakenRows(turn),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("承伤", "Taken")} {takenDamage}");
         }
 
         if (settings.ShowBlockGained)
@@ -367,7 +357,6 @@ public static partial class DpsMeterUi
                 blockGained,
                 BuildMetricRows(L("格挡获得", "Block Gained"), blockGained),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("格挡", "Block")} {blockGained}");
         }
 
         if (settings.ShowEnergySpent)
@@ -377,7 +366,6 @@ public static partial class DpsMeterUi
                 energySpent,
                 BuildMetricRows(L("消耗能量", "Energy Spent"), energySpent),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("能量", "Energy")} {energySpent}");
         }
 
         if (isMultiplayer && settings.ShowEnergyGivenToAllies)
@@ -389,7 +377,6 @@ public static partial class DpsMeterUi
                     L("给予队友能量", "Energy Given to Allies"),
                     energyGivenToAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友能量", "Ally Energy")} {energyGivenToAllies}");
         }
 
         if (isMultiplayer && settings.ShowBlockGivenToAllies)
@@ -401,7 +388,6 @@ public static partial class DpsMeterUi
                     L("给予队友护盾", "Block Given to Allies"),
                     blockGivenToAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友护盾", "Ally Block")} {blockGivenToAllies}");
         }
 
         if (isMultiplayer && settings.ShowHealingGivenToAllies)
@@ -413,7 +399,6 @@ public static partial class DpsMeterUi
                     L("给予队友回血", "Healing Given to Allies"),
                     healingGivenToAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友回血", "Ally Healing")} {healingGivenToAllies}");
         }
 
         if (isMultiplayer && settings.ShowCardsDrawnForAllies)
@@ -425,28 +410,15 @@ public static partial class DpsMeterUi
                     L("为队友抽牌", "Cards Drawn for Allies"),
                     cardsDrawnForAllies),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友抽牌", "Ally Draw")} {cardsDrawnForAllies}");
         }
 
-        return new DamageViewData(
-            BuildTitle(L("本回合", "This Turn"), isMultiplayer, LocalizeKnownValue(player.DisplayName), titleParts),
-            sections);
+        return new DamageViewData(string.Empty, sections);
     }
 
-    private static DamageViewData BuildTotalView(
+    private static DamageViewData BuildTeamView(
         DpsMeterSettingsData settings,
-        CombatStatsSnapshot snapshot,
-        bool isMultiplayer)
+        CombatStatsSnapshot snapshot)
     {
-        if (!isMultiplayer)
-        {
-            return BuildCombatView(
-                settings,
-                snapshot.Players[0],
-                isMultiplayer: false,
-                scopeLabel: L("总计", "Total"));
-        }
-
         var dealtTotal = snapshot.Players.Sum(player => player.TotalDamage);
         var takenTotal = snapshot.Players.Sum(player => player.IncomingDamage + player.SelfLossDamage);
         var blockTotal = snapshot.Players.Sum(player => player.BlockGained);
@@ -456,7 +428,6 @@ public static partial class DpsMeterUi
         var healingGivenTotal = snapshot.Players.Sum(player => player.HealingGivenToAllies);
         var cardsDrawnForAlliesTotal = snapshot.Players.Sum(player => player.CardsDrawnForAllies);
         var sections = new List<DamageSectionData>();
-        var titleParts = new List<string>();
 
         if (settings.ShowDealtBreakdown)
         {
@@ -465,7 +436,6 @@ public static partial class DpsMeterUi
                 dealtTotal,
                 BuildMultiplayerOutputRows(snapshot),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("伤害", "Damage")} {dealtTotal}");
         }
 
         if (settings.ShowTakenBreakdown)
@@ -475,7 +445,6 @@ public static partial class DpsMeterUi
                 takenTotal,
                 BuildMultiplayerTakenRows(snapshot),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("承伤", "Taken")} {takenTotal}");
         }
 
         if (settings.ShowBlockGained)
@@ -485,7 +454,6 @@ public static partial class DpsMeterUi
                 blockTotal,
                 BuildMultiplayerBlockRows(snapshot),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("格挡", "Block")} {blockTotal}");
         }
 
         if (settings.ShowEnergySpent)
@@ -495,7 +463,6 @@ public static partial class DpsMeterUi
                 energyTotal,
                 BuildMultiplayerEnergyRows(snapshot),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("能量", "Energy")} {energyTotal}");
         }
 
         if (settings.ShowEnergyGivenToAllies)
@@ -508,7 +475,6 @@ public static partial class DpsMeterUi
                     player => player.EnergyGivenToAllies,
                     L("给予队友能量", "Energy Given to Allies")),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友能量", "Ally Energy")} {energyGivenTotal}");
         }
 
         if (settings.ShowBlockGivenToAllies)
@@ -521,7 +487,6 @@ public static partial class DpsMeterUi
                     player => player.BlockGivenToAllies,
                     L("给予队友护盾", "Block Given to Allies")),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友护盾", "Ally Block")} {blockGivenTotal}");
         }
 
         if (settings.ShowHealingGivenToAllies)
@@ -534,7 +499,6 @@ public static partial class DpsMeterUi
                     player => player.HealingGivenToAllies,
                     L("给予队友回血", "Healing Given to Allies")),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友回血", "Ally Healing")} {healingGivenTotal}");
         }
 
         if (settings.ShowCardsDrawnForAllies)
@@ -547,12 +511,9 @@ public static partial class DpsMeterUi
                     player => player.CardsDrawnForAllies,
                     L("为队友抽牌", "Cards Drawn for Allies")),
                 KeepZeroRows: true));
-            titleParts.Add($"{L("队友抽牌", "Ally Draw")} {cardsDrawnForAlliesTotal}");
         }
 
-        return new DamageViewData(
-            BuildTitle(L("总计", "Total"), isMultiplayer: true, playerName: null, titleParts),
-            sections);
+        return new DamageViewData(string.Empty, sections);
     }
 
     private static string L(string chinese, string english)
@@ -585,18 +546,6 @@ public static partial class DpsMeterUi
                 || settings.ShowCardsDrawnForAllies));
     }
 
-    private static string BuildTitle(
-        string scopeLabel,
-        bool isMultiplayer,
-        string? playerName,
-        IReadOnlyList<string> values)
-    {
-        var detail = values.Count == 0 ? "0" : string.Join(" / ", values);
-        var playerPrefix = string.IsNullOrWhiteSpace(playerName) ? string.Empty : $"{playerName} · ";
-        var multiplayerPrefix = isMultiplayer ? $"{L("多人 · ", "Multiplayer · ")}{playerPrefix}" : string.Empty;
-        return $"{multiplayerPrefix}{scopeLabel}{L("：", ": ")}{detail}";
-    }
-
     private static IReadOnlyList<DamageRowData> BuildMultiplayerOutputRows(CombatStatsSnapshot snapshot)
     {
         return snapshot.Players
@@ -610,7 +559,9 @@ public static partial class DpsMeterUi
                 player.IsLocalPlayer,
                 new HudSourceInfo(Hits: player.HitCount, MaxHit: player.MaxHit,
                     BlockedDamage: player.BlockedDamage, UnblockedDamage: player.UnblockedDamage,
-                    OverkillDamage: player.OverkillDamage), Key: player.PlayerNetId.ToString()))
+                    OverkillDamage: player.OverkillDamage,
+                    LastTriggerSequence: DpsHudSourceInfo.Latest(player.Sources.Select(source => source.LastTriggerSequence))),
+                Key: player.PlayerNetId.ToString()))
             .ToArray();
     }
 
@@ -627,7 +578,10 @@ public static partial class DpsMeterUi
                 player.NameColorHex,
                 player.IsLocalPlayer,
                 new HudSourceInfo(Hits: player.IncomingHits + player.SelfLossHits,
-                    MetricName: L("受到伤害", "Damage taken")), Key: player.PlayerNetId.ToString()))
+                    MaxHit: player.IncomingSources.Concat(player.SelfLossSources).Select(source => (long?)source.MaxHit).Max(),
+                    MetricName: L("受到伤害", "Damage taken"),
+                    LastTriggerSequence: DpsHudSourceInfo.Latest(player.IncomingSources.Concat(player.SelfLossSources)
+                        .Select(source => source.LastTriggerSequence))), Key: player.PlayerNetId.ToString()))
             .ToArray();
     }
 
@@ -708,9 +662,11 @@ public static partial class DpsMeterUi
         return new[]
         {
             new DamageRowData(L("敌方伤害", "Enemy Damage"), turn?.IncomingDamage ?? 0,
-                Info: new HudSourceInfo(DamageSourceType.Enemy, MetricName: L("受到伤害", "Damage taken"))),
+                Info: new HudSourceInfo(DamageSourceType.Enemy, MetricName: L("受到伤害", "Damage taken"),
+                    LastTriggerSequence: DpsHudSourceInfo.Latest(new[] { turn?.IncomingLastTriggerSequence ?? 0 }))),
             new DamageRowData(L("自损", "Self"), turn?.SelfLossDamage ?? 0,
-                Info: new HudSourceInfo(DamageSourceType.Self, MetricName: L("自损", "Self-loss")))
+                Info: new HudSourceInfo(DamageSourceType.Self, MetricName: L("自损", "Self-loss"),
+                    LastTriggerSequence: DpsHudSourceInfo.Latest(new[] { turn?.SelfLossLastTriggerSequence ?? 0 })))
         };
     }
 
@@ -772,24 +728,31 @@ public static partial class DpsMeterUi
         };
     }
 
-    private static void NormalizeScopeSelection()
+    private static bool NormalizeScopeSelection(int playerCount)
     {
-        _scopeIndex = Math.Clamp(_scopeIndex, ScopeCombat, ScopeTotal);
-        _scopeOption!.SetItemText(ScopeCombat, L("本场战斗", "This Combat"));
-        _scopeOption.SetItemText(ScopeTurn, L("本回合", "This Turn"));
-        _scopeOption.SetItemText(ScopeTotal, L("总计", "Total"));
-        _scopeOption.TooltipText = L("选择统计范围", "Select scope");
-        _scopeOption.Selected = _scopeIndex;
-        for (var index = ScopeCombat; index <= ScopeTotal; index++)
+        var scope = DpsHudScope.Normalize((HudScope)_scopeIndex, playerCount);
+        var changed = _scopeIndex != (int)scope;
+        if (changed) ResetContentScroll();
+        _scopeIndex = (int)scope;
+        var count = DpsHudScope.Count(playerCount);
+        if (_scopeOption!.ItemCount != count)
         {
-            _scopeOption.SetItemDisabled(index, disabled: false);
+            _scopeOption.Clear();
+            for (var index = 0; index < count; index++) _scopeOption.AddItem(string.Empty, index);
+            changed = true;
         }
-
+        for (var index = 0; index < count; index++)
+        {
+            _scopeOption.SetItemText(index, DpsHudScope.Label((HudScope)index, DpsLocalization.IsChinese));
+        }
+        _scopeOption.TooltipText = L("本场/本回合为当前玩家；全队为当前战斗队伍汇总", "Combat/Turn show the selected player; Team summarizes the current combat");
+        _scopeOption.Select(_scopeIndex);
         if (IsAlive(_settingsButton))
         {
             _settingsButton!.Text = "⚙";
             _settingsButton.TooltipText = L("打开设置", "Open settings");
         }
+        return changed;
     }
 
     private static bool UpdateNavigationState(int playerCount)
@@ -797,12 +760,12 @@ public static partial class DpsMeterUi
         // 单人不占用两枚无效箭头的宽度，给放大后的标题留出空间。
         var changed = SetVisible(_previousPlayerButton!, playerCount > 1);
         changed |= SetVisible(_nextPlayerButton!, playerCount > 1);
-        var canSwitchPlayer = _scopeIndex != ScopeTotal && playerCount > 1;
+        var canSwitchPlayer = _scopeIndex != ScopeTeam && playerCount > 1;
         _previousPlayerButton!.Disabled = !canSwitchPlayer;
         _nextPlayerButton!.Disabled = !canSwitchPlayer;
         _previousPlayerButton.TooltipText = canSwitchPlayer
             ? L("上一个玩家", "Previous player")
-            : _scopeIndex == ScopeTotal ? L("总计显示队伍汇总", "Total shows the team summary") : L("当前仅有一个玩家", "Only one player in this combat");
+            : _scopeIndex == ScopeTeam ? L("全队显示当前战斗队伍汇总", "Team shows the current combat summary") : L("当前仅有一个玩家", "Only one player in this combat");
         _nextPlayerButton.TooltipText = _previousPlayerButton.TooltipText;
         return changed;
     }
@@ -820,7 +783,7 @@ public static partial class DpsMeterUi
     private static void MovePlayerSelection(int delta)
     {
         var players = DpsStats.GetSnapshot().Players;
-        if (players.Count <= 1 || _scopeIndex == ScopeTotal)
+        if (players.Count <= 1 || _scopeIndex == ScopeTeam)
         {
             return;
         }
@@ -832,7 +795,7 @@ public static partial class DpsMeterUi
 
     private static void OnScopeSelected(long index)
     {
-        _scopeIndex = Math.Clamp((int)index, ScopeCombat, ScopeTotal);
+        _scopeIndex = _scopeOption!.GetItemId((int)index);
         _selectedPlayerIndex = 0;
         ResetContentScroll();
         Refresh();
@@ -1013,7 +976,6 @@ public static partial class DpsMeterUi
         };
         _scopeOption.AddItem(L("本场战斗", "This Combat"));
         _scopeOption.AddItem(L("本回合", "This Turn"));
-        _scopeOption.AddItem(L("总计", "Total"));
         _scopeOption.Selected = ScopeCombat;
         _scopeOption.ItemSelected += OnScopeSelected;
         _scopeOption.AddThemeColorOverride("font_color", PrimaryText);
@@ -1168,15 +1130,6 @@ public static partial class DpsMeterUi
     {
         return value is not null && GodotObject.IsInstanceValid(value);
     }
-
-    private sealed record DamageRowData(
-        string Label,
-        long Damage,
-        string? Details = null,
-        string? NameColorHex = null,
-        bool IsLocalPlayer = false,
-        HudSourceInfo? Info = null,
-        string? Key = null);
 
     private sealed record DamageSectionData(
         string? Heading,

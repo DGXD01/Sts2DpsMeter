@@ -25,6 +25,13 @@ public sealed class DpsMeterSettingsData
     public bool ShowFieldHits { get; set; }
     public bool ShowFieldMaxHit { get; set; }
     public bool ShowFieldAverage { get; set; }
+    public bool SummaryDamage { get; set; } = true;
+    public bool SummaryDps { get; set; }
+    public bool SummaryDpt { get; set; }
+    public bool SummaryTaken { get; set; }
+    public bool SummaryTurn { get; set; }
+    public bool SummaryHits { get; set; }
+    public HudSortMode SortMode { get; set; } = HudSortMode.Damage;
     public bool StartVisible { get; set; } = true;
     public bool LockPosition { get; set; }
     public bool CompactMode { get; set; }
@@ -175,6 +182,13 @@ public static class DpsMeterSettings
             ShowFieldHits = source.ShowFieldHits,
             ShowFieldMaxHit = source.ShowFieldMaxHit,
             ShowFieldAverage = source.ShowFieldAverage,
+            SummaryDamage = source.SummaryDamage,
+            SummaryDps = source.SummaryDps,
+            SummaryDpt = source.SummaryDpt,
+            SummaryTaken = source.SummaryTaken,
+            SummaryTurn = source.SummaryTurn,
+            SummaryHits = source.SummaryHits,
+            SortMode = source.SortMode,
             StartVisible = source.StartVisible,
             LockPosition = source.LockPosition,
             CompactMode = source.CompactMode,
@@ -198,6 +212,8 @@ public static class DpsMeterSettings
     private static void Normalize(DpsMeterSettingsData settings)
     {
         settings.SchemaVersion = CurrentSchemaVersion;
+        DpsHudSummary.Normalize(settings);
+        if (!Enum.IsDefined(settings.SortMode)) settings.SortMode = HudSortMode.Damage;
         if (!Enum.IsDefined(settings.TooltipDetailMode))
         {
             settings.TooltipDetailMode = HudTooltipDetail.Detailed;

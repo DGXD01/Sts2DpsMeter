@@ -116,7 +116,7 @@ public static class DpsMeterSettingsUi
 
         _introductionLabel = new Label
         {
-            Text = DpsLocalization.Get("伤害发生后于下一帧刷新，同帧请求合并处理。点击 HUD 的齿轮（⚙）按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。", "Refreshes on the next frame after damage, combining requests from the same frame. Use the HUD gear (⚙) to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings."),
+            Text = DpsLocalization.Get("伤害发生后于下一帧刷新，同帧请求合并处理。点击 HUD 的齿轮（⚙）按钮打开或关闭此面板；单人范围为本场战斗、本回合；多人增加全队，显示当前战斗的队伍汇总和玩家排行。", "Refreshes on the next frame after damage, combining requests from the same frame. Use the HUD gear (⚙) to open or close this panel. Single-player scopes are This Combat and This Turn. Multiplayer adds Team for current-combat summaries and player rankings."),
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
@@ -151,8 +151,8 @@ public static class DpsMeterSettingsUi
         if (IsAlive(_introductionLabel))
         {
             _introductionLabel!.Text = DpsLocalization.Get(
-                "伤害发生后于下一帧刷新，同帧请求合并处理。点击 HUD 的齿轮（⚙）按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。",
-                "Refreshes on the next frame after damage, combining requests from the same frame. Use the HUD gear (⚙) to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings.");
+                "伤害发生后于下一帧刷新，同帧请求合并处理。点击 HUD 的齿轮（⚙）按钮打开或关闭此面板；单人范围为本场战斗、本回合；多人增加全队，显示当前战斗的队伍汇总和玩家排行。",
+                "Refreshes on the next frame after damage, combining requests from the same frame. Use the HUD gear (⚙) to open or close this panel. Single-player scopes are This Combat and This Turn. Multiplayer adds Team for current-combat summaries and player rankings.");
         }
     }
 
@@ -177,6 +177,17 @@ public static class DpsMeterSettingsUi
             settings.CompactMode = value;
             SaveAndRefresh();
         });
+
+        AddSection(DpsLocalization.Get("标题摘要", "Title Summary"));
+        AddSummaryToggle(DpsLocalization.Get("摘要：总伤害", "Summary: damage"), settings.SummaryDamage, value => settings.SummaryDamage = value);
+        AddSummaryToggle(DpsLocalization.Get("摘要：DPS", "Summary: DPS"), settings.SummaryDps, value => settings.SummaryDps = value);
+        AddSummaryToggle(DpsLocalization.Get("摘要：DPT", "Summary: DPT"), settings.SummaryDpt, value => settings.SummaryDpt = value);
+        AddSummaryToggle(DpsLocalization.Get("摘要：承伤", "Summary: damage taken"), settings.SummaryTaken, value => settings.SummaryTaken = value);
+        AddSummaryToggle(DpsLocalization.Get("摘要：回合数", "Summary: turn number"), settings.SummaryTurn, value => settings.SummaryTurn = value);
+        AddSummaryToggle(DpsLocalization.Get("摘要：命中次数", "Summary: hits"), settings.SummaryHits, value => settings.SummaryHits = value);
+        AddText(DpsLocalization.Get(
+            "最多同时选择三项，需先取消一项再选其他项；全关只显示范围。摘要独立于统计模块，标题过长可悬停查看全文。承伤含敌方伤害和自损。回合数为当前战斗回合号；本回合 DPS 使用本回合耗时，DPT 为本回合伤害。全队按当前战斗合计计算。",
+            "Select up to three; deselect one before adding another. None shows only the scope. Summary is independent of modules; hover a clipped title for full text. Taken includes enemy damage and self-loss. Turn is the current combat round; Turn DPS uses time in that round, and Turn DPT equals its damage. Team uses current-combat totals."), MutedColor);
 
         AddSection(DpsLocalization.Get("统计模块", "Statistics Modules"));
         AddToggle(DpsLocalization.Get("玩家造成伤害", "Damage Dealt"), settings.ShowDealtBreakdown, value =>
@@ -223,6 +234,19 @@ public static class DpsMeterSettingsUi
         AddText(DpsLocalization.Get("可在下方勾选需要显示的模块；统计范围仅切换数据的时间维度，不改变模块开关。", "Select the modules to display below; scope changes only the time range, not the module toggles."), MutedColor);
 
         AddSection(DpsLocalization.Get("数据行", "Data Rows"));
+        AddOptionRow(DpsLocalization.Get("排序方式", "Sort by"), new[]
+        {
+            DpsLocalization.Get("总伤害/数值", "Damage / Value"), DpsLocalization.Get("百分比", "Percentage"),
+            DpsLocalization.Get("命中次数", "Hits"), DpsLocalization.Get("最大伤害", "Max hit"),
+            DpsLocalization.Get("名称", "Name"), DpsLocalization.Get("最近触发", "Most recent")
+        }, (int)settings.SortMode, value =>
+        {
+            settings.SortMode = (HudSortMode)value;
+            SaveAndRefresh();
+        });
+        AddText(DpsLocalization.Get(
+            "名称按字符顺序升序，其余降序；同值按名称保持稳定顺序，先排序再限制显示行数。缺失的命中/最大/触发记录排在已有记录之后；辅助指标没有对应记录时按名称排序。百分比分母是整个模块总量，不因截断行数改变。",
+            "Name sorts ascending by character order; others descending. Ties keep a stable name order; sorting happens before the row limit. Missing hit/max/trigger records follow known records; support metrics without them use name order. Percentages use the full module total, including hidden rows."), MutedColor);
         AddToggle(DpsLocalization.Get("显示来源图标", "Show source icons"), settings.ShowSourceIcons, value =>
         {
             settings.ShowSourceIcons = value;
@@ -468,6 +492,17 @@ public static class DpsMeterSettingsUi
         SaveAndRefresh();
         // 同步“全部关闭时保留名称”的归一化结果，不在事件回调中直接移除控件。
         Callable.From(Refresh).CallDeferred();
+    }
+
+    private static void AddSummaryToggle(string title, bool selected, Action<bool> changed)
+    {
+        AddToggle(title, selected, value =>
+        {
+            changed(value);
+            if (DpsHudSummary.SelectedCount(DpsMeterSettings.Current) > DpsHudSummary.MaxFields) changed(false);
+            SaveAndRefresh();
+            Callable.From(Refresh).CallDeferred();
+        });
     }
 
     private static void ClearChildren(Node node)

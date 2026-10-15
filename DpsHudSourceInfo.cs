@@ -17,7 +17,8 @@ internal sealed record HudSourceInfo(
     DamageMechanismKind? Mechanism = null,
     SourceTrackingStatus? TrackingStatus = null,
     string? InternalId = null,
-    string? MetricName = null);
+    string? MetricName = null,
+    long? LastTriggerSequence = null);
 
 internal static class DpsHudSourceInfo
 {
@@ -40,7 +41,8 @@ internal static class DpsHudSourceInfo
             Common(items.Select(item => (AttributionConfidence?)item.Confidence)),
             Common(items.Select(item => (DamageMechanismKind?)item.Mechanism)),
             Common(items.Select(item => (SourceTrackingStatus?)item.TrackingStatus)),
-            CommonId(items.Select(item => item.InternalId)));
+            CommonId(items.Select(item => item.InternalId)),
+            LastTriggerSequence: Latest(items.Select(item => item.LastTriggerSequence)));
     }
 
     internal static HudSourceInfo FromCards(IEnumerable<CardDamageSnapshot> cards)
@@ -56,7 +58,14 @@ internal static class DpsHudSourceInfo
             items.Sum(item => item.BlockedDamage), items.Sum(item => item.UnblockedDamage),
             items.Sum(item => item.OverkillDamage),
             TrackingStatus: Common(items.Select(item => (SourceTrackingStatus?)item.TrackingStatus)),
-            InternalId: CommonId(items.Select(item => item.CardId ?? item.GroupId)));
+            InternalId: CommonId(items.Select(item => item.CardId ?? item.GroupId)),
+            LastTriggerSequence: Latest(items.Select(item => item.LastTriggerSequence)));
+    }
+
+    internal static long? Latest(IEnumerable<long> sequences)
+    {
+        var latest = sequences.DefaultIfEmpty(0).Max();
+        return latest > 0 ? latest : null;
     }
 
     private static T? Common<T>(IEnumerable<T?> values) where T : struct
