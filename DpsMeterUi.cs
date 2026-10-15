@@ -9,7 +9,7 @@ namespace Sts2DpsMeter;
 
 public static partial class DpsMeterUi
 {
-    private const float MinimumPanelWidth = 360f;
+    private const float MinimumPanelWidth = DpsHudLayout.PreferredWidth;
     private const float MinimumPanelHeight = 1f;
     private const int ScopeCombat = 0;
     private const int ScopeTurn = 1;
@@ -28,6 +28,9 @@ public static partial class DpsMeterUi
     private static CanvasLayer? _canvas;
     private static PanelContainer? _panel;
     private static StyleBoxFlat? _panelStyle;
+    private static VBoxContainer? _layout;
+    private static HBoxContainer? _headerRow;
+    private static ScrollContainer? _contentScroll;
     private static GridContainer? _moduleGrid;
     private static Label? _header;
     private static Button? _previousPlayerButton;
@@ -36,7 +39,7 @@ public static partial class DpsMeterUi
     private static Button? _settingsButton;
     private static Button? _collapseButton;
     private static Control? _contentDivider;
-    private static DpsMeterHost? _host;
+    private static Node? _host;
     private static bool _visible = true;
     private static bool _visibilityInitialized;
     private static bool _dragging;
@@ -54,6 +57,7 @@ public static partial class DpsMeterUi
         {
             DpsMeterSettingsUi.EnsureAttached(_canvas!);
             _canvas!.Visible = true;
+            ResetContentScroll();
             Refresh();
             return;
         }
@@ -69,13 +73,19 @@ public static partial class DpsMeterUi
 
             if (!IsAlive(_host))
             {
-                _host = new DpsMeterHost
+                var host = new Node
                 {
                     Name = "Sts2DpsMeterHost",
                     ProcessMode = Node.ProcessModeEnum.Always
                 };
-                root.AddChild(_host);
-                _host.SetProcess(true);
+                _host = host;
+                root.AddChild(host);
+                host.SetProcess(true);
+                var refreshHost = new DpsMeterHost(DpsStats.Tick, RefreshNow);
+                void OnProcessFrame() => refreshHost.ProcessFrame(host.GetProcessDeltaTime());
+                // 本项目未使用 Godot 源码生成器，直接连接原生信号，避免依赖自定义 _Process 绑定。
+                tree!.ProcessFrame += OnProcessFrame;
+                host.TreeExiting += () => tree.ProcessFrame -= OnProcessFrame;
             }
 
             if (!IsAlive(_canvas))
@@ -118,7 +128,8 @@ public static partial class DpsMeterUi
             !IsAlive(_scopeOption) ||
             !IsAlive(_settingsButton) ||
             !IsAlive(_collapseButton) ||
-            !IsAlive(_contentDivider))
+            !IsAlive(_contentDivider) ||
+            !IsAlive(_contentScroll))
         {
             return;
         }
@@ -139,7 +150,7 @@ public static partial class DpsMeterUi
         ApplyPanelStyle(settings);
         NormalizeScopeSelection();
         _contentDivider!.Visible = !_contentCollapsed;
-        _moduleGrid!.Visible = !_contentCollapsed;
+        _contentScroll!.Visible = !_contentCollapsed;
         UpdateCollapseButton();
 
         var view = BuildDamageView(settings, snapshot);
@@ -150,9 +161,10 @@ public static partial class DpsMeterUi
         UpdateNavigationState(snapshot.Players.Count);
 
         _header.TooltipText = view.Title;
-        var contentChanged = !_contentCollapsed && UpdateDamageSections(settings, view);
+        var language = DpsLocalization.LanguageCode;
+        var contentChanged = !_contentCollapsed && UpdateDamageSections(settings, view, language);
         var layoutState = new PanelLayoutState(
-            view.Title, DpsLocalization.LanguageCode, settings.CompactMode,
+            language, settings.CompactMode,
             settings.UiScale, settings.PositionX, settings.PositionY,
             _contentCollapsed, GetViewportSize());
         if (contentChanged || layoutState != _lastLayoutState)
@@ -797,6 +809,7 @@ public static partial class DpsMeterUi
         }
 
         _selectedPlayerIndex = (_selectedPlayerIndex + delta + players.Count) % players.Count;
+        ResetContentScroll();
         Refresh();
     }
 
@@ -804,6 +817,7 @@ public static partial class DpsMeterUi
     {
         _scopeIndex = Math.Clamp((int)index, ScopeCombat, ScopeTotal);
         _selectedPlayerIndex = 0;
+        ResetContentScroll();
         Refresh();
     }
     private static void OnSettingsPressed()
@@ -830,24 +844,35 @@ public static partial class DpsMeterUi
 
     private static void FitPanelToContent(DpsMeterSettingsData settings)
     {
-        if (!IsAlive(_panel))
+        if (!IsAlive(_panel) || !IsAlive(_panelStyle) || !IsAlive(_layout) ||
+            !IsAlive(_headerRow) || !IsAlive(_contentScroll) || !IsAlive(_moduleGrid))
         {
             return;
         }
 
-        _panel!.CustomMinimumSize = new Vector2(MinimumPanelWidth, 0f);
-        var minimum = _panel.GetCombinedMinimumSize();
-        var viewportSize = GetViewportSize();
-        var maxWidth = Mathf.Max(MinimumPanelWidth, (viewportSize.X - 24f) / settings.UiScale);
-        var maxHeight = Mathf.Max(MinimumPanelHeight, (viewportSize.Y - 24f) / settings.UiScale);
-        var width = Mathf.Clamp(minimum.X, MinimumPanelWidth, maxWidth);
-        var height = Mathf.Clamp(minimum.Y, MinimumPanelHeight, maxHeight);
-        _panel.Size = new Vector2(width, height);
+        var chromeMinimum = _panelStyle!.GetMinimumSize() + _headerRow!.GetCombinedMinimumSize();
+        if (!_contentCollapsed)
+        {
+            chromeMinimum.Y += _contentDivider!.GetCombinedMinimumSize().Y
+                + 2 * _layout!.GetThemeConstant("separation");
+        }
 
-        var scaledSize = _panel.Size * settings.UiScale;
-        _panel.Position = new Vector2(
-            Mathf.Clamp(_panel.Position.X, 0f, Mathf.Max(0f, viewportSize.X - scaledSize.X)),
-            Mathf.Clamp(_panel.Position.Y, 0f, Mathf.Max(0f, viewportSize.Y - scaledSize.Y)));
+        // ScrollContainer 隔离明细的最小高度，避免容器把已限高的面板重新撑出屏幕。
+        var bounds = DpsHudLayout.Calculate(
+            GetViewportSize(), _panel!.Position, settings.UiScale, chromeMinimum,
+            _moduleGrid!.GetCombinedMinimumSize().Y, _contentCollapsed);
+        _contentScroll!.CustomMinimumSize = new Vector2(0, bounds.BodyHeight);
+        _panel.CustomMinimumSize = new Vector2(bounds.Size.X, 0);
+        _panel.Size = bounds.Size;
+        _panel.Position = bounds.Position;
+    }
+
+    private static void ResetContentScroll()
+    {
+        if (IsAlive(_contentScroll))
+        {
+            _contentScroll!.ScrollVertical = 0;
+        }
     }
 
     private static void QueueDeferredPanelFit()
@@ -887,6 +912,7 @@ public static partial class DpsMeterUi
     private static void BuildPanel(CanvasLayer canvas)
     {
         SectionPool.Clear();
+        ActiveRows.Clear();
         _lastLayoutState = null;
         _panel = new PanelContainer
         {
@@ -924,6 +950,7 @@ public static partial class DpsMeterUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         layout.AddThemeConstantOverride("separation", 4);
+        _layout = layout;
         _panel.AddChild(layout);
 
         var headerRow = new HBoxContainer
@@ -932,6 +959,7 @@ public static partial class DpsMeterUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         headerRow.AddThemeConstantOverride("separation", 4);
+        _headerRow = headerRow;
         layout.AddChild(headerRow);
 
         _previousPlayerButton = CreateArrowButton("◀", OnPreviousPlayerPressed);
@@ -989,15 +1017,30 @@ public static partial class DpsMeterUi
         };
         layout.AddChild(_contentDivider);
 
+        _contentScroll = new ScrollContainer
+        {
+            Name = "Sts2DpsMeterScroll",
+            HorizontalScrollMode = ScrollContainer.ScrollMode.Disabled,
+            VerticalScrollMode = ScrollContainer.ScrollMode.Auto,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            SizeFlagsVertical = Control.SizeFlags.ExpandFill,
+            FocusMode = Control.FocusModeEnum.None,
+            MouseFilter = Control.MouseFilterEnum.Pass,
+            MouseForcePassScrollEvents = false
+        };
+        _contentScroll.GetVScrollBar().FocusMode = Control.FocusModeEnum.None;
+        layout.AddChild(_contentScroll);
+
         _moduleGrid = new GridContainer
         {
             Name = "Sts2DpsMeterRows",
             Columns = 1,
+            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         _moduleGrid.AddThemeConstantOverride("h_separation", 6);
         _moduleGrid.AddThemeConstantOverride("v_separation", 4);
-        layout.AddChild(_moduleGrid);
+        _contentScroll.AddChild(_moduleGrid);
     }
 
     private static Button CreateArrowButton(string text, Action pressed)
@@ -1123,7 +1166,6 @@ public static partial class DpsMeterUi
         IReadOnlyList<DamageSectionData> Sections);
 
     private sealed record PanelLayoutState(
-        string Title,
         string Language,
         bool CompactMode,
         float UiScale,
@@ -1133,20 +1175,28 @@ public static partial class DpsMeterUi
         Vector2 ViewportSize);
 }
 
-internal sealed class DpsMeterHost : Node
+internal sealed class DpsMeterHost
 {
+    private readonly Action<double> _tick;
+    private readonly Action _refresh;
     private double _refreshTimer;
 
-    public override void _Process(double delta)
+    internal DpsMeterHost(Action<double> tick, Action refresh)
     {
-        DpsStats.Tick(delta);
+        _tick = tick;
+        _refresh = refresh;
+    }
+
+    internal void ProcessFrame(double delta)
+    {
+        _tick(delta);
 
         var immediateRefresh = DpsMeterUi.ConsumeImmediateRefreshRequest();
         _refreshTimer -= delta;
         if (immediateRefresh || _refreshTimer <= 0)
         {
             _refreshTimer = 0.25;
-            DpsMeterUi.RefreshNow();
+            _refresh();
         }
     }
 

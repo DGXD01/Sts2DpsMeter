@@ -7,11 +7,13 @@ namespace Sts2DpsMeter;
 
 public static partial class DpsMeterUi
 {
-    private static bool UpdateDamageSections(DpsMeterSettingsData settings, DamageViewData view)
+    private static readonly List<DamageRowControls> ActiveRows = new();
+
+    private static bool UpdateDamageSections(DpsMeterSettingsData settings, DamageViewData view, string language)
     {
         var changed = false;
         var sectionCount = Math.Max(1, view.Sections.Count);
-        var activeRows = new List<DamageRowControls>();
+        ActiveRows.Clear();
 
         for (var index = 0; index < sectionCount; index++)
         {
@@ -36,7 +38,7 @@ public static partial class DpsMeterUi
             }
 
             changed |= SectionPool[index].Update(
-                data?.Heading, rows, data?.Total ?? 0, settings.CompactMode, activeRows);
+                data?.Heading, rows, data?.Total ?? 0, settings.CompactMode, language, ActiveRows);
         }
 
         for (var index = sectionCount; index < SectionPool.Count; index++)
@@ -47,13 +49,14 @@ public static partial class DpsMeterUi
         // 统一测量所有可见行，较长数字不会只挤压某一行的名称列。
         var damageWidth = 42f;
         var percentageWidth = 42f;
-        foreach (var row in activeRows)
+        foreach (var row in ActiveRows)
         {
-            damageWidth = Math.Max(damageWidth, row.MeasureDamageWidth());
-            percentageWidth = Math.Max(percentageWidth, row.MeasurePercentageWidth());
+            var measured = row.MeasureColumnWidths();
+            damageWidth = Math.Max(damageWidth, measured.Damage);
+            percentageWidth = Math.Max(percentageWidth, measured.Percentage);
         }
 
-        foreach (var row in activeRows)
+        foreach (var row in ActiveRows)
         {
             changed |= row.SetColumnWidths(damageWidth, percentageWidth);
         }
@@ -83,6 +86,8 @@ public static partial class DpsMeterUi
         private readonly Label _heading = new()
         {
             CustomMinimumSize = new Vector2(0, 20),
+            ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
             VerticalAlignment = VerticalAlignment.Center,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
@@ -103,6 +108,7 @@ public static partial class DpsMeterUi
             IReadOnlyList<DamageRowData> rows,
             long total,
             bool compact,
+            string language,
             List<DamageRowControls> activeRows)
         {
             var changed = SetVisible(Container, true);
@@ -126,7 +132,7 @@ public static partial class DpsMeterUi
                 var percentage = total > 0
                     ? Math.Clamp(rows[index].Damage / (double)total * 100d, 0d, 100d)
                     : 0d;
-                changed |= _rows[index].Update(rows[index], percentage, compact);
+                changed |= _rows[index].Update(rows[index], percentage, compact, language);
                 activeRows.Add(_rows[index]);
             }
 
@@ -155,6 +161,9 @@ public static partial class DpsMeterUi
         private DamageRowData? _lastData;
         private double _lastPercentage;
         private bool _compact;
+        private string? _lastLanguage;
+        private bool _measurementsDirty = true;
+        private (float Damage, float Percentage) _measuredWidths;
 
         public DamageRowControls()
         {
@@ -227,12 +236,15 @@ public static partial class DpsMeterUi
             _percentage = CreateTextColumn("PercentageColumn", HorizontalAlignment.Right);
             columns.AddChild(_damage);
             columns.AddChild(_percentage);
+            _damage.ThemeChanged += InvalidateMeasurements;
+            _percentage.ThemeChanged += InvalidateMeasurements;
         }
 
-        public bool Update(DamageRowData data, double percentage, bool compact)
+        public bool Update(DamageRowData data, double percentage, bool compact, string language)
         {
             var changed = SetVisible(Root, true);
-            if (_lastData == data && _lastPercentage == percentage && _compact == compact)
+            if (_lastData == data && _lastPercentage == percentage && _compact == compact &&
+                _lastLanguage == language)
             {
                 return changed;
             }
@@ -246,28 +258,54 @@ public static partial class DpsMeterUi
                 _richName.AddThemeFontSizeOverride("bold_font_size", fontSize);
                 _damage.AddThemeFontSizeOverride("font_size", fontSize);
                 _percentage.AddThemeFontSizeOverride("font_size", fontSize);
+                _measurementsDirty = true;
+                changed = true;
             }
 
-            if (_lastData != data)
+            if (_lastData != data || _lastLanguage != language)
             {
                 _name.Text = data.Label;
                 _richName.Text = data.Details is not null ? BuildRichRowText(data) : string.Empty;
                 _name.Visible = data.Details is null;
                 _richName.Visible = data.Details is not null;
-                _damage.Text = data.Damage.ToString();
+                var damageText = data.Damage.ToString();
+                if (_damage.Text != damageText)
+                {
+                    _damage.Text = damageText;
+                    _measurementsDirty = true;
+                }
             }
 
-            _percentage.Text = $"{Math.Round(percentage):0}%";
+            var percentageText = $"{Math.Round(percentage):0}%";
+            if (_percentage.Text != percentageText)
+            {
+                _percentage.Text = percentageText;
+                _measurementsDirty = true;
+            }
             _progress.Value = percentage;
             _lastData = data;
             _lastPercentage = percentage;
             _compact = compact;
-            return true;
+            _lastLanguage = language;
+            return changed;
         }
 
-        public float MeasureDamageWidth() => MeasureTextWidth(_damage);
+        public (float Damage, float Percentage) MeasureColumnWidths()
+        {
+            if (_measurementsDirty)
+            {
+                _measuredWidths = (MeasureTextWidth(_damage), MeasureTextWidth(_percentage));
+                _measurementsDirty = false;
+            }
 
-        public float MeasurePercentageWidth() => MeasureTextWidth(_percentage);
+            return _measuredWidths;
+        }
+
+        private void InvalidateMeasurements()
+        {
+            _measurementsDirty = true;
+            RequestImmediateRefresh();
+        }
 
         public bool SetColumnWidths(float damageWidth, float percentageWidth)
         {

@@ -3,7 +3,7 @@
   "name": "Sts2 DPS Meter - 轻量化战斗统计",
   "author": "DGXD",
   "description": "轻量化战斗统计：仅监听战斗事件，不修改游戏平衡。HUD 可拖拽、缩放和锁定，支持本场战斗、本回合、总计三种范围；多人模式自动显示队伍汇总与玩家排行。承伤、格挡、能量使用及队友能量、护盾、回血、抽牌统计可在设置中独立开启。",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "min_game_version": "0.107.1",
   "has_pck": false,
   "has_dll": true,

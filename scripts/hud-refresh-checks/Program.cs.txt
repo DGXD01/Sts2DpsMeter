@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using System.Threading.Tasks;
+using Godot;
 using Sts2DpsMeter;
 
 internal static class Program
@@ -62,6 +63,103 @@ internal static class Program
         DpsMeterUi.RequestImmediateRefresh();
         Require(Consume() && !Consume(), "并发消费后新到达的请求必须仍可消费");
         Console.WriteLine("通过：生产与消费交错后，新请求仍可正常刷新");
-        Console.WriteLine("HUD 刷新调度检查全部通过；此结果不代表容器布局或游戏内交互已验收。");
+        CheckFrameConsumer();
+        CheckLayoutBounds();
+        Console.WriteLine("HUD 刷新调度与布局边界检查全部通过；此结果不代表原生容器或游戏内交互已验收。");
+    }
+
+    private static void CheckFrameConsumer()
+    {
+        var refreshes = 0;
+        var elapsed = 0d;
+        var host = new DpsMeterHost(delta => elapsed += delta, () => refreshes++);
+        Consume();
+        host.ProcessFrame(0.01);
+        Require(refreshes == 1, "首帧应生成明细，不能只有标题栏");
+        for (var index = 0; index < 1000; index++)
+        {
+            DpsMeterUi.Refresh();
+        }
+        host.ProcessFrame(0.01);
+        Require(refreshes == 2 && !Consume(), "同帧请求必须由实际 Host 消费并仅调用一次刷新");
+        host.ProcessFrame(0.01);
+        Require(refreshes == 2, "无请求且未到轮询间隔时不应重复刷新");
+        host.ProcessFrame(0.25);
+        Require(refreshes == 3 && Math.Abs(elapsed - 0.28) < 0.000001,
+            "无伤害事件时仍应按轮询间隔刷新并累计时间");
+        var reentrantHost = new DpsMeterHost(_ => { }, () =>
+        {
+            refreshes++;
+            DpsMeterUi.Refresh();
+        });
+        reentrantHost.ProcessFrame(0.01);
+        reentrantHost.ProcessFrame(0.01);
+        Require(refreshes == 5 && Consume(), "刷新中产生的新请求必须保留到下一帧，不能递归刷新或丢失");
+        Console.WriteLine("通过：真实 Host 首帧、同帧合并、轮询计时与刷新中新增请求检查");
+    }
+
+    private static void CheckLayoutBounds()
+    {
+        var viewports = new[]
+        {
+            new Vector2(1280, 720), new Vector2(1920, 1080),
+            new Vector2(2560, 1440), new Vector2(3840, 2160)
+        };
+        var scales = new[] { 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f };
+        var contentHeights = new[] { 0f, 28f, 800f, 8192f };
+        var positions = new[] { new Vector2(-20, -5), new Vector2(18, 18), new Vector2(9999, 9999) };
+        var cases = 0;
+        const float tolerance = 0.01f;
+
+        foreach (var viewport in viewports)
+        {
+            foreach (var scale in scales)
+            {
+                foreach (var contentHeight in contentHeights)
+                {
+                    foreach (var position in positions)
+                    {
+                        var chrome = new Vector2(340, 51);
+                        var bounds = DpsHudLayout.Calculate(viewport, position, scale, chrome, contentHeight, false);
+                        Require(bounds.Size.X > 0 && bounds.Size.Y >= chrome.Y,
+                            "标题和设置按钮所需的面板区域必须保留");
+                        Require(bounds.Size.X * scale <= viewport.X + tolerance &&
+                            bounds.Size.Y * scale <= viewport.Y + tolerance,
+                            $"面板在 {viewport}、缩放 {scale} 时超出屏幕");
+                        Require(bounds.Position.X >= 0 && bounds.Position.Y >= 0 &&
+                            bounds.Position.X + bounds.Size.X * scale <= viewport.X + tolerance &&
+                            bounds.Position.Y + bounds.Size.Y * scale <= viewport.Y + tolerance,
+                            "保存位置越界后应能重新看到整个面板");
+                        Require(bounds.BodyHeight >= 0 && bounds.BodyHeight <= contentHeight,
+                            "明细高度不能为负或产生额外空白");
+                        Require(Math.Abs(bounds.Size.Y - chrome.Y - bounds.BodyHeight) < tolerance,
+                            "明细和标题区域的总高度必须一致");
+                        Require(DpsHudLayout.Calculate(viewport, bounds.Position, scale, chrome, contentHeight, false) == bounds,
+                            "重复布局不应导致位置或尺寸漂移");
+                        if (contentHeight == 8192f)
+                        {
+                            Require(bounds.BodyHeight < contentHeight, "大量数据行必须限高而非撑出屏幕");
+                        }
+                        cases++;
+                    }
+                }
+
+                var collapsed = DpsHudLayout.Calculate(viewport, new Vector2(9999, 9999), scale,
+                    new Vector2(340, 42), 8192, true);
+                Require(collapsed.BodyHeight == 0 && collapsed.Size.Y == 42,
+                    "折叠后只应保留标题区域");
+                cases++;
+            }
+        }
+
+        var shortContent = DpsHudLayout.Calculate(new Vector2(1920, 1080), Vector2.Zero, 1,
+            new Vector2(340, 51), 28, false);
+        Require(shortContent.BodyHeight == 28 && shortContent.Size.Y == 79,
+            "少量数据行应保持紧凑，而非占满屏幕");
+        var wideHeader = DpsHudLayout.Calculate(new Vector2(1280, 720), Vector2.Zero, 2,
+            new Vector2(420, 51), 28, false);
+        Require(wideHeader.Size.X >= 420 && wideHeader.Size.X * 2 <= 1280,
+            "较宽的本地化标题控件应保留所需宽度");
+        Console.WriteLine($"通过：{cases + 2} 个布局场景，覆盖四种分辨率、六档缩放、超长内容、越界位置及折叠");
     }
 }
