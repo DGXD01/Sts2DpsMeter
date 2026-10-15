@@ -7,7 +7,7 @@ using MegaCrit.Sts2.Core.Helpers;
 
 namespace Sts2DpsMeter;
 
-public static class DpsMeterUi
+public static partial class DpsMeterUi
 {
     private const float MinimumPanelWidth = 360f;
     private const float MinimumPanelHeight = 1f;
@@ -44,8 +44,9 @@ public static class DpsMeterUi
     private static int _selectedPlayerIndex;
     private static int _scopeIndex = ScopeCombat;
     private static int _immediateRefreshRequested;
-    private static int _deferredRefreshQueued;
     private static int _deferredPanelFitQueued;
+    private static readonly List<DamageSectionControls> SectionPool = new();
+    private static PanelLayoutState? _lastLayoutState;
 
     public static void EnsureAttached()
     {
@@ -106,6 +107,11 @@ public static class DpsMeterUi
 
     public static void Refresh()
     {
+        RequestImmediateRefresh();
+    }
+
+    internal static void RefreshNow()
+    {
         if (!IsAlive(_panel) ||
             !IsAlive(_moduleGrid) ||
             !IsAlive(_header) ||
@@ -121,7 +127,9 @@ public static class DpsMeterUi
         var snapshot = DpsStats.GetSnapshot();
 
         _panel!.Visible = _visible;
-        if (!_dragging)
+        if (!_dragging && (_lastLayoutState is null ||
+            settings.PositionX != _lastLayoutState.PositionX ||
+            settings.PositionY != _lastLayoutState.PositionY))
         {
             _panel.Position = new Vector2(settings.PositionX, settings.PositionY);
         }
@@ -135,99 +143,36 @@ public static class DpsMeterUi
         UpdateCollapseButton();
 
         var view = BuildDamageView(settings, snapshot);
-        _header!.Text = view.Title;
+        if (_header!.Text != view.Title)
+        {
+            _header.Text = view.Title;
+        }
         UpdateNavigationState(snapshot.Players.Count);
 
-        _moduleGrid!.Columns = 1;
-        if (_contentCollapsed)
+        _header.TooltipText = view.Title;
+        var contentChanged = !_contentCollapsed && UpdateDamageSections(settings, view);
+        var layoutState = new PanelLayoutState(
+            view.Title, DpsLocalization.LanguageCode, settings.CompactMode,
+            settings.UiScale, settings.PositionX, settings.PositionY,
+            _contentCollapsed, GetViewportSize());
+        if (contentChanged || layoutState != _lastLayoutState)
         {
-            EnsurePanelSize(settings);
+            _lastLayoutState = layoutState;
+            FitPanelToContent(settings);
             QueueDeferredPanelFit();
-            return;
         }
-
-        ClearChildren(_moduleGrid);
-
-        if (view.Sections.Count == 0)
-        {
-            AddDamageRow(settings, L("暂无记录", "No records"), 0, 0d);
-        }
-        else
-        {
-            foreach (var section in view.Sections)
-            {
-                if (!string.IsNullOrWhiteSpace(section.Heading))
-                {
-                    AddDamageSectionHeader(section.Heading);
-                }
-
-                var rows = section.Rows
-                    .Where(row => section.KeepZeroRows || row.Damage > 0)
-                    .OrderByDescending(row => row.Damage)
-                    .ThenBy(row => row.Label, StringComparer.Ordinal)
-                    .Take(settings.MaxRows)
-                    .ToArray();
-
-                if (rows.Length == 0)
-                {
-                    AddDamageRow(settings, L("暂无记录", "No records"), 0, 0d);
-                    continue;
-                }
-
-                foreach (var row in rows)
-                {
-                    var percentage = section.Total > 0
-                        ? Math.Clamp(row.Damage / (double)section.Total * 100d, 0d, 100d)
-                        : 0d;
-                    AddDamageRow(settings, row, percentage);
-                }
-            }
-        }
-
-        EnsurePanelSize(settings);
-        QueueDeferredPanelFit();
     }
 
     public static void RequestImmediateRefresh()
     {
-        // 伤害 Hook 由游戏主线程同步调用时，直接刷新，避免等待下一帧或回合结束。
-        if (IsMainThread())
-        {
-            Interlocked.Exchange(ref _immediateRefreshRequested, 0);
-            Refresh();
-            return;
-        }
-
-        // 后台线程不能直接操作 Godot 控件，统一投递到主线程。
+        // 任意线程只标记请求；Host 每帧至多消费一次，合并连锁伤害及设置刷新。
+        // 不在伤害 Hook 或后台线程中访问 Godot 控件。
         Interlocked.Exchange(ref _immediateRefreshRequested, 1);
-        QueueDeferredRefresh();
     }
 
     internal static bool ConsumeImmediateRefreshRequest()
     {
         return Interlocked.Exchange(ref _immediateRefreshRequested, 0) == 1;
-    }
-
-    internal static void FlushDeferredRefresh()
-    {
-        Interlocked.Exchange(ref _deferredRefreshQueued, 0);
-        if (ConsumeImmediateRefreshRequest())
-        {
-            Refresh();
-        }
-    }
-
-    private static bool IsMainThread()
-    {
-        try
-        {
-            return OS.GetThreadCallerId() == OS.GetMainThreadId();
-        }
-        catch
-        {
-            // 无法判断线程时保守地走延迟队列，避免在后台线程直接访问控件。
-            return false;
-        }
     }
 
     internal static void FlushDeferredPanelFit()
@@ -760,130 +705,6 @@ public static class DpsMeterUi
     }
 
 
-    private static void AddDamageRow(
-        DpsMeterSettingsData settings,
-        string labelText,
-        long damage,
-        double percentage)
-    {
-        AddDamageRow(settings, new DamageRowData(labelText, damage), percentage);
-    }
-
-    private static void AddDamageRow(
-        DpsMeterSettingsData settings,
-        DamageRowData rowData,
-        double percentage)
-    {
-        var labelText = rowData.Label;
-        var damage = rowData.Damage;
-        var rowHeight = settings.CompactMode ? 24f : 28f;
-        var row = new Control
-        {
-            CustomMinimumSize = new Vector2(0, rowHeight),
-            SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-
-        var progress = new ProgressBar
-        {
-            MinValue = 0,
-            MaxValue = 100,
-            Value = percentage,
-            ShowPercentage = false,
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        progress.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        progress.AddThemeStyleboxOverride("background", CreateBarStyle(BarBackground, 5));
-        progress.AddThemeStyleboxOverride("fill", CreateBarStyle(BarFill, 5));
-        row.AddChild(progress);
-
-        var overlay = new MarginContainer
-        {
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        overlay.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-        overlay.AddThemeConstantOverride("margin_left", 7);
-        overlay.AddThemeConstantOverride("margin_right", 7);
-        overlay.AddThemeConstantOverride("margin_top", 2);
-        overlay.AddThemeConstantOverride("margin_bottom", 2);
-        row.AddChild(overlay);
-
-        var textRow = new HBoxContainer
-        {
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        textRow.AddThemeConstantOverride("separation", 8);
-        overlay.AddChild(textRow);
-
-        Control nameControl;
-        if (rowData.Details is not null)
-        {
-            var richName = new RichTextLabel
-            {
-                Text = BuildRichRowText(rowData),
-                BbcodeEnabled = true,
-                FitContent = true,
-                ScrollActive = false,
-                AutowrapMode = TextServer.AutowrapMode.Off,
-                ClipContents = true,
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-                SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-                CustomMinimumSize = new Vector2(0, rowHeight),
-                MouseFilter = Control.MouseFilterEnum.Ignore
-            };
-            richName.AddThemeColorOverride("default_color", PrimaryText);
-            richName.AddThemeColorOverride("font_outline_color", Colors.Black);
-            richName.AddThemeConstantOverride("outline_size", 2);
-            richName.AddThemeFontSizeOverride(
-                "normal_font_size",
-                settings.CompactMode ? 12 : 13);
-            nameControl = richName;
-        }
-        else
-        {
-            var nameLabel = new Label
-            {
-                Text = labelText,
-                VerticalAlignment = VerticalAlignment.Center,
-                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
-                MouseFilter = Control.MouseFilterEnum.Ignore,
-                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis
-            };
-            nameLabel.AddThemeColorOverride("font_color", PrimaryText);
-            nameLabel.AddThemeColorOverride("font_outline_color", Colors.Black);
-            nameLabel.AddThemeConstantOverride("outline_size", 2);
-            nameLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
-            nameControl = nameLabel;
-        }
-        textRow.AddChild(nameControl);
-
-        var damageLabel = new Label
-        {
-            Text = damage.ToString(),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(42, 0),
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        damageLabel.AddThemeColorOverride("font_color", PrimaryText);
-        damageLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
-        textRow.AddChild(damageLabel);
-
-        var percentageLabel = new Label
-        {
-            Text = $"{Math.Round(percentage):0}%",
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            CustomMinimumSize = new Vector2(42, 0),
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        percentageLabel.AddThemeColorOverride("font_color", PrimaryText);
-        percentageLabel.AddThemeFontSizeOverride("font_size", settings.CompactMode ? 12 : 13);
-        textRow.AddChild(percentageLabel);
-
-        _moduleGrid!.AddChild(row);
-    }
-
     private static string BuildRichRowText(DamageRowData rowData)
     {
         var escapedName = rowData.Label.EscapeBbcodeTags();
@@ -914,22 +735,6 @@ public static class DpsMeterUi
         return colorHex.ToUpperInvariant();
     }
 
-    private static void AddDamageSectionHeader(string heading)
-    {
-        var label = new Label
-        {
-            Text = heading,
-            CustomMinimumSize = new Vector2(0, 20f),
-            VerticalAlignment = VerticalAlignment.Center,
-            MouseFilter = Control.MouseFilterEnum.Ignore
-        };
-        label.AddThemeColorOverride("font_color", TitleBlue);
-        label.AddThemeColorOverride("font_outline_color", Colors.Black);
-        label.AddThemeConstantOverride("outline_size", 2);
-        label.AddThemeFontSizeOverride("font_size", 14);
-        _moduleGrid!.AddChild(label);
-    }
-
     private static StyleBoxFlat CreateBarStyle(Color color, int radius)
     {
         return new StyleBoxFlat
@@ -957,7 +762,7 @@ public static class DpsMeterUi
 
         if (IsAlive(_settingsButton))
         {
-            _settingsButton!.Text = L("设", "S");
+            _settingsButton!.Text = "⚙";
             _settingsButton.TooltipText = L("打开设置", "Open settings");
         }
     }
@@ -1023,11 +828,6 @@ public static class DpsMeterUi
         _collapseButton.TooltipText = _contentCollapsed ? L("展开伤害明细", "Expand damage details") : L("收起伤害明细", "Collapse damage details");
     }
 
-    private static void EnsurePanelSize(DpsMeterSettingsData settings)
-    {
-        FitPanelToContent(settings);
-    }
-
     private static void FitPanelToContent(DpsMeterSettingsData settings)
     {
         if (!IsAlive(_panel))
@@ -1038,8 +838,8 @@ public static class DpsMeterUi
         _panel!.CustomMinimumSize = new Vector2(MinimumPanelWidth, 0f);
         var minimum = _panel.GetCombinedMinimumSize();
         var viewportSize = GetViewportSize();
-        var maxWidth = Mathf.Max(MinimumPanelWidth, viewportSize.X - 24f);
-        var maxHeight = Mathf.Max(MinimumPanelHeight, viewportSize.Y - 24f);
+        var maxWidth = Mathf.Max(MinimumPanelWidth, (viewportSize.X - 24f) / settings.UiScale);
+        var maxHeight = Mathf.Max(MinimumPanelHeight, (viewportSize.Y - 24f) / settings.UiScale);
         var width = Mathf.Clamp(minimum.X, MinimumPanelWidth, maxWidth);
         var height = Mathf.Clamp(minimum.Y, MinimumPanelHeight, maxHeight);
         _panel.Size = new Vector2(width, height);
@@ -1048,23 +848,6 @@ public static class DpsMeterUi
         _panel.Position = new Vector2(
             Mathf.Clamp(_panel.Position.X, 0f, Mathf.Max(0f, viewportSize.X - scaledSize.X)),
             Mathf.Clamp(_panel.Position.Y, 0f, Mathf.Max(0f, viewportSize.Y - scaledSize.Y)));
-    }
-
-    private static void QueueDeferredRefresh()
-    {
-        if (!IsAlive(_host) || Interlocked.Exchange(ref _deferredRefreshQueued, 1) == 1)
-        {
-            return;
-        }
-
-        try
-        {
-            Callable.From(FlushDeferredRefresh).CallDeferred();
-        }
-        catch
-        {
-            Interlocked.Exchange(ref _deferredRefreshQueued, 0);
-        }
     }
 
     private static void QueueDeferredPanelFit()
@@ -1103,6 +886,8 @@ public static class DpsMeterUi
 
     private static void BuildPanel(CanvasLayer canvas)
     {
+        SectionPool.Clear();
+        _lastLayoutState = null;
         _panel = new PanelContainer
         {
             Name = "Sts2DpsMeterPanel",
@@ -1120,14 +905,14 @@ public static class DpsMeterUi
             BorderWidthTop = 1,
             BorderWidthRight = 1,
             BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 11,
-            CornerRadiusTopRight = 11,
-            CornerRadiusBottomLeft = 11,
-            CornerRadiusBottomRight = 11,
-            ContentMarginLeft = 11,
-            ContentMarginTop = 10,
-            ContentMarginRight = 11,
-            ContentMarginBottom = 10
+            CornerRadiusTopLeft = 6,
+            CornerRadiusTopRight = 6,
+            CornerRadiusBottomLeft = 6,
+            CornerRadiusBottomRight = 6,
+            ContentMarginLeft = 8,
+            ContentMarginTop = 6,
+            ContentMarginRight = 8,
+            ContentMarginBottom = 6
         };
         _panel.AddThemeStyleboxOverride("panel", _panelStyle);
         _panel.GuiInput += OnPanelGuiInput;
@@ -1138,7 +923,7 @@ public static class DpsMeterUi
             Name = "Sts2DpsMeterLayout",
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        layout.AddThemeConstantOverride("separation", 8);
+        layout.AddThemeConstantOverride("separation", 4);
         _panel.AddChild(layout);
 
         var headerRow = new HBoxContainer
@@ -1146,7 +931,7 @@ public static class DpsMeterUi
             Name = "Sts2DpsMeterHeader",
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        headerRow.AddThemeConstantOverride("separation", 6);
+        headerRow.AddThemeConstantOverride("separation", 4);
         layout.AddChild(headerRow);
 
         _previousPlayerButton = CreateArrowButton("◀", OnPreviousPlayerPressed);
@@ -1158,12 +943,14 @@ public static class DpsMeterUi
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
+            ClipText = true,
+            TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         _header.AddThemeColorOverride("font_color", TitleBlue);
         _header.AddThemeColorOverride("font_outline_color", Colors.Black);
         _header.AddThemeConstantOverride("outline_size", 3);
-        _header.AddThemeFontSizeOverride("font_size", 19);
+        _header.AddThemeFontSizeOverride("font_size", 14);
         headerRow.AddChild(_header);
 
         _nextPlayerButton = CreateArrowButton("▶", OnNextPlayerPressed);
@@ -1186,7 +973,7 @@ public static class DpsMeterUi
         ApplyDropdownStyle(_scopeOption);
         headerRow.AddChild(_scopeOption);
 
-        _settingsButton = CreateArrowButton(L("设", "S"), OnSettingsPressed);
+        _settingsButton = CreateArrowButton("⚙", OnSettingsPressed);
         _settingsButton.TooltipText = L("打开设置", "Open settings");
         headerRow.AddChild(_settingsButton);
 
@@ -1209,7 +996,7 @@ public static class DpsMeterUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         _moduleGrid.AddThemeConstantOverride("h_separation", 6);
-        _moduleGrid.AddThemeConstantOverride("v_separation", 6);
+        _moduleGrid.AddThemeConstantOverride("v_separation", 4);
         layout.AddChild(_moduleGrid);
     }
 
@@ -1313,15 +1100,6 @@ public static class DpsMeterUi
         }
     }
 
-    private static void ClearChildren(Node node)
-    {
-        foreach (var child in node.GetChildren())
-        {
-            node.RemoveChild(child);
-            child.QueueFree();
-        }
-    }
-
     private static bool IsAlive(GodotObject? value)
     {
         return value is not null && GodotObject.IsInstanceValid(value);
@@ -1343,6 +1121,16 @@ public static class DpsMeterUi
     private sealed record DamageViewData(
         string Title,
         IReadOnlyList<DamageSectionData> Sections);
+
+    private sealed record PanelLayoutState(
+        string Title,
+        string Language,
+        bool CompactMode,
+        float UiScale,
+        float PositionX,
+        float PositionY,
+        bool Collapsed,
+        Vector2 ViewportSize);
 }
 
 internal sealed class DpsMeterHost : Node
@@ -1358,7 +1146,7 @@ internal sealed class DpsMeterHost : Node
         if (immediateRefresh || _refreshTimer <= 0)
         {
             _refreshTimer = 0.25;
-            DpsMeterUi.Refresh();
+            DpsMeterUi.RefreshNow();
         }
     }
 

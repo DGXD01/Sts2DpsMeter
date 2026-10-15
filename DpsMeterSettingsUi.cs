@@ -115,7 +115,7 @@ public static class DpsMeterSettingsUi
 
         _introductionLabel = new Label
         {
-            Text = DpsLocalization.Get("伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。", "Refreshes immediately after damage. Use the HUD button to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings."),
+            Text = DpsLocalization.Get("伤害发生后于下一帧刷新，同帧请求合并处理。点击 HUD 的齿轮（⚙）按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。", "Refreshes on the next frame after damage, combining requests from the same frame. Use the HUD gear (⚙) to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings."),
             MouseFilter = Control.MouseFilterEnum.Ignore,
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
@@ -148,8 +148,8 @@ public static class DpsMeterSettingsUi
         if (IsAlive(_introductionLabel))
         {
             _introductionLabel!.Text = DpsLocalization.Get(
-                "伤害发生后立即刷新。点击 HUD 的“设”按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。",
-                "Refreshes immediately after damage. Use the HUD button to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings.");
+                "伤害发生后于下一帧刷新，同帧请求合并处理。点击 HUD 的齿轮（⚙）按钮打开或关闭此面板；右上角范围固定为本场战斗、本回合、总计，多人游戏会自动使用队伍汇总和玩家排行。",
+                "Refreshes on the next frame after damage, combining requests from the same frame. Use the HUD gear (⚙) to open or close this panel. The scope in the top-right is fixed to This Combat, This Turn, and Total; multiplayer automatically uses team summaries and player rankings.");
         }
     }
 

@@ -1,0 +1,67 @@
+using System;
+using System.Reflection;
+using System.Threading.Tasks;
+using Sts2DpsMeter;
+
+internal static class Program
+{
+    private static readonly Func<bool> Consume = typeof(DpsMeterUi)
+        .GetMethod("ConsumeImmediateRefreshRequest", BindingFlags.Static | BindingFlags.NonPublic)!
+        .CreateDelegate<Func<bool>>();
+
+    private static void Require(bool result, string description)
+    {
+        if (!result)
+        {
+            throw new InvalidOperationException(description);
+        }
+    }
+
+    private static void Main()
+    {
+        // 测试真实 Mod 程序集；不启动 Godot，不使用替身控件。
+        // 无场景树时调用刷新入口必须安全，后台线程只能写请求标记。
+        Consume();
+        DpsMeterUi.Refresh();
+        Require(Consume(), "场景树未附加时，普通刷新请求应保留到主线程消费");
+        Require(!Consume(), "已消费请求不应重复生效");
+        Console.WriteLine("通过：未附加 HUD 的刷新入口安全，消费后不会重复刷新");
+
+        for (var index = 0; index < 10000; index++)
+        {
+            DpsMeterUi.Refresh();
+            DpsMeterUi.RequestImmediateRefresh();
+        }
+        Require(Consume() && !Consume(), "同帧混合刷新请求应合并为一次");
+        Console.WriteLine("通过：20,000 次混合请求合并为一次消费");
+
+        Parallel.For(0, 100000, _ => DpsMeterUi.RequestImmediateRefresh());
+        Require(Consume() && !Consume(), "后台并发请求应安全合并且不访问 Godot 控件");
+        Console.WriteLine("通过：100,000 次并发请求安全合并，无 Godot 原生调用");
+
+        for (var frame = 0; frame < 100; frame++)
+        {
+            Parallel.For(0, 256, _ => DpsMeterUi.Refresh());
+            Require(Consume() && !Consume(), $"第 {frame} 个消费周期请求丢失或重复");
+        }
+        Console.WriteLine("通过：连续 100 个消费周期，每周期仅消费一次");
+
+        var producer = Task.Run(() =>
+        {
+            for (var index = 0; index < 100000; index++)
+            {
+                DpsMeterUi.RequestImmediateRefresh();
+            }
+        });
+        while (!producer.IsCompleted)
+        {
+            Consume();
+        }
+        producer.GetAwaiter().GetResult();
+        Consume();
+        DpsMeterUi.RequestImmediateRefresh();
+        Require(Consume() && !Consume(), "并发消费后新到达的请求必须仍可消费");
+        Console.WriteLine("通过：生产与消费交错后，新请求仍可正常刷新");
+        Console.WriteLine("HUD 刷新调度检查全部通过；此结果不代表容器布局或游戏内交互已验收。");
+    }
+}
