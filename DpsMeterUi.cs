@@ -85,7 +85,9 @@ public static partial class DpsMeterUi
                 void OnProcessFrame()
                 {
                     var delta = host.GetProcessDeltaTime();
+                    ProcessHudInteractions(delta);
                     refreshHost.ProcessFrame(delta);
+                    UpdateHudOpacity(delta);
                     ProcessHeaderTooltip(delta);
                 }
                 // 本项目未使用 Godot 源码生成器，直接连接原生信号，避免依赖自定义 _Process 绑定。
@@ -94,6 +96,12 @@ public static partial class DpsMeterUi
                 {
                     tree.ProcessFrame -= OnProcessFrame;
                     HideHeaderTooltip();
+                    LowInterference.Reset();
+                    OpacityTransition.Reset();
+                    _dragging = false;
+                    _combatActive = false;
+                    _lastLayoutState = null;
+                    if (IsAlive(_snapPreview)) _snapPreview!.Visible = false;
                 };
             }
 
@@ -145,8 +153,14 @@ public static partial class DpsMeterUi
 
         var settings = DpsMeterSettings.Current;
         var snapshot = DpsStats.GetSnapshot();
+        _combatActive = snapshot.IsActive;
+        if (!_combatActive || !_visible || DpsMeterSettingsUi.IsVisible) LowInterference.Reset();
+        var presentation = InteractionPresentation;
+        var collapsed = presentation.Collapsed;
 
         _panel!.Visible = _visible;
+        // 刷新统计时沿用当前动画值；目标值只由每帧透明度更新推进。
+        _panel.Modulate = new Color(1, 1, 1, OpacityTransition.Current);
         if (!_visible) HideHeaderTooltip();
         if (!_dragging && (_lastLayoutState is null ||
             settings.PositionX != _lastLayoutState.PositionX ||
@@ -159,8 +173,8 @@ public static partial class DpsMeterUi
         _panel.PivotOffset = Vector2.Zero;
         ApplyPanelStyle(settings);
         var scopeChanged = NormalizeScopeSelection(snapshot.Players.Count);
-        _contentDivider!.Visible = !_contentCollapsed;
-        _contentScroll!.Visible = !_contentCollapsed;
+        _contentDivider!.Visible = !collapsed;
+        _contentScroll!.Visible = !collapsed;
         UpdateCollapseButton();
 
         var view = BuildDamageView(settings, snapshot);
@@ -172,11 +186,11 @@ public static partial class DpsMeterUi
 
         HeaderTooltip.Update(view.Title);
         var language = DpsLocalization.LanguageCode;
-        var contentChanged = !_contentCollapsed && UpdateDamageSections(settings, view, language);
+        var contentChanged = !collapsed && UpdateDamageSections(settings, view, language);
         var layoutState = new PanelLayoutState(
             language, settings.CompactMode,
             settings.UiScale, settings.PositionX, settings.PositionY,
-            _contentCollapsed, GetViewportSize());
+            collapsed, GetViewportSize(), settings.SnapEnabled, settings.ScreenMargin, settings.SnapAnchor);
         if (contentChanged || navigationChanged || scopeChanged || layoutState != _lastLayoutState)
         {
             _lastLayoutState = layoutState;
@@ -818,7 +832,8 @@ public static partial class DpsMeterUi
 
     private static void OnCollapsePressed()
     {
-        _contentCollapsed = !_contentCollapsed;
+        _contentCollapsed = !InteractionPresentation.Collapsed;
+        LowInterference.Reset();
         Refresh();
     }
 
@@ -829,8 +844,9 @@ public static partial class DpsMeterUi
             return;
         }
 
-        _collapseButton!.Text = _contentCollapsed ? "+" : "−";
-        _collapseButton.TooltipText = _contentCollapsed ? L("展开伤害明细", "Expand damage details") : L("收起伤害明细", "Collapse damage details");
+        var collapsed = InteractionPresentation.Collapsed;
+        _collapseButton!.Text = collapsed ? "+" : "−";
+        _collapseButton.TooltipText = collapsed ? L("展开伤害明细", "Expand damage details") : L("收起伤害明细", "Collapse damage details");
     }
 
     private static void FitPanelToContent(DpsMeterSettingsData settings)
@@ -842,7 +858,8 @@ public static partial class DpsMeterUi
         }
 
         var chromeMinimum = _panelStyle!.GetMinimumSize() + _headerRow!.GetCombinedMinimumSize();
-        if (!_contentCollapsed)
+        var collapsed = InteractionPresentation.Collapsed;
+        if (!collapsed)
         {
             chromeMinimum.Y += _contentDivider!.GetCombinedMinimumSize().Y
                 + 2 * _layout!.GetThemeConstant("separation");
@@ -851,11 +868,13 @@ public static partial class DpsMeterUi
         // ScrollContainer 隔离明细的最小高度，避免容器把已限高的面板重新撑出屏幕。
         var bounds = DpsHudLayout.Calculate(
             GetViewportSize(), _panel!.Position, settings.UiScale, chromeMinimum,
-            _moduleGrid!.GetCombinedMinimumSize().Y, _contentCollapsed);
+            _moduleGrid!.GetCombinedMinimumSize().Y, collapsed);
         _contentScroll!.CustomMinimumSize = new Vector2(0, bounds.BodyHeight);
         _panel.CustomMinimumSize = new Vector2(bounds.Size.X, 0);
         _panel.Size = bounds.Size;
-        _panel.Position = bounds.Position;
+        _panel.Position = DpsHudPlacement.Restore(bounds.Position, bounds.Size * settings.UiScale, GetViewportSize(),
+            !_dragging && settings.SnapEnabled ? settings.ScreenMargin : 0,
+            !_dragging && settings.SnapEnabled ? settings.SnapAnchor : HudSnapAnchor.None);
     }
 
     private static void ResetContentScroll()
@@ -1038,6 +1057,7 @@ public static partial class DpsMeterUi
         _moduleGrid.AddThemeConstantOverride("h_separation", 6);
         _moduleGrid.AddThemeConstantOverride("v_separation", 4);
         _contentScroll.AddChild(_moduleGrid);
+        BuildSnapPreview(canvas);
         BuildHeaderTooltip(canvas);
     }
 
@@ -1105,40 +1125,12 @@ public static partial class DpsMeterUi
 
     private static void OnPanelGuiInput(InputEvent @event)
     {
-        var settings = DpsMeterSettings.Current;
-        if (@event is InputEventMouseButton mouseButton)
+        if (@event is InputEventMouseButton { ButtonIndex: MouseButton.Left } mouseButton)
         {
-            if (settings.LockPosition)
-            {
-                return;
-            }
-
-            if (mouseButton.ButtonIndex == MouseButton.Left)
-            {
-                if (mouseButton.Pressed)
-                {
-                    _dragging = true;
-                }
-                else if (_dragging)
-                {
-                    _dragging = false;
-                    settings.PositionX = _panel!.Position.X;
-                    settings.PositionY = _panel.Position.Y;
-                    DpsMeterSettings.Save();
-                    DpsMeterSettingsUi.Refresh();
-                }
-            }
+            if (mouseButton.Pressed) BeginHudDrag();
+            else FinishHudDrag(cancel: DpsMeterSettings.Current.LockPosition);
         }
-        else if (@event is InputEventMouseMotion mouseMotion && _dragging && !settings.LockPosition)
-        {
-            var viewport = _panel!.GetViewport();
-            var viewportSize = viewport?.GetVisibleRect().Size ?? new Vector2(1280f, 720f);
-            var proposed = _panel.Position + mouseMotion.Relative;
-            var scaledSize = _panel.Size * DpsMeterSettings.Current.UiScale;
-            _panel.Position = new Vector2(
-                Mathf.Clamp(proposed.X, 0f, Mathf.Max(0f, viewportSize.X - scaledSize.X)),
-                Mathf.Clamp(proposed.Y, 0f, Mathf.Max(0f, viewportSize.Y - scaledSize.Y)));
-        }
+        else if (@event is InputEventMouseMotion && _dragging && !DpsMeterSettings.Current.LockPosition) MoveHudDrag();
     }
 
     private static bool IsAlive(GodotObject? value)
@@ -1163,7 +1155,10 @@ public static partial class DpsMeterUi
         float PositionX,
         float PositionY,
         bool Collapsed,
-        Vector2 ViewportSize);
+        Vector2 ViewportSize,
+        bool SnapEnabled,
+        float ScreenMargin,
+        HudSnapAnchor SnapAnchor);
 }
 
 internal sealed class DpsMeterHost

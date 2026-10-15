@@ -15,7 +15,13 @@ public enum HudTooltipDetail
 
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 5;
+    public int SchemaVersion { get; set; } = 6;
+    public bool SnapEnabled { get; set; } = true;
+    public float SnapDistance { get; set; } = 24f;
+    public float ScreenMargin { get; set; } = 12f;
+    public HudSnapAnchor SnapAnchor { get; set; }
+    public HudLowInterferenceMode LowInterferenceMode { get; set; } = HudLowInterferenceMode.Off;
+    public float LowInterferenceOpacity { get; set; } = 0.3f;
     public bool ShowSourceIcons { get; set; } = true;
     public HudTooltipDetail TooltipDetailMode { get; set; } = HudTooltipDetail.Detailed;
     public bool EnableRowDetails { get; set; } = true;
@@ -57,7 +63,7 @@ public static class DpsMeterSettings
     public const float MaxUiScale = 2.0f;
     public const float UiScaleStep = 0.05f;
 
-    private const int CurrentSchemaVersion = 5;
+    private const int CurrentSchemaVersion = 6;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -173,6 +179,12 @@ public static class DpsMeterSettings
         return new DpsMeterSettingsData
         {
             SchemaVersion = source.SchemaVersion,
+            SnapEnabled = source.SnapEnabled,
+            SnapDistance = source.SnapDistance,
+            ScreenMargin = source.ScreenMargin,
+            SnapAnchor = source.SnapAnchor,
+            LowInterferenceMode = source.LowInterferenceMode,
+            LowInterferenceOpacity = source.LowInterferenceOpacity,
             ShowSourceIcons = source.ShowSourceIcons,
             TooltipDetailMode = source.TooltipDetailMode,
             EnableRowDetails = source.EnableRowDetails,
@@ -212,6 +224,11 @@ public static class DpsMeterSettings
     private static void Normalize(DpsMeterSettingsData settings)
     {
         settings.SchemaVersion = CurrentSchemaVersion;
+        settings.SnapDistance = float.IsFinite(settings.SnapDistance) ? Math.Clamp(settings.SnapDistance, 4, 80) : 24;
+        settings.ScreenMargin = float.IsFinite(settings.ScreenMargin) ? Math.Clamp(settings.ScreenMargin, 0, 64) : 12;
+        settings.SnapAnchor = DpsHudPlacement.NormalizeAnchor(settings.SnapAnchor);
+        if (!Enum.IsDefined(settings.LowInterferenceMode)) settings.LowInterferenceMode = HudLowInterferenceMode.Off;
+        settings.LowInterferenceOpacity = float.IsFinite(settings.LowInterferenceOpacity) ? Math.Clamp(settings.LowInterferenceOpacity, 0.25f, 0.4f) : 0.3f;
         DpsHudSummary.Normalize(settings);
         if (!Enum.IsDefined(settings.SortMode)) settings.SortMode = HudSortMode.Damage;
         if (!Enum.IsDefined(settings.TooltipDetailMode))

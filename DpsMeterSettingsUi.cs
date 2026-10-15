@@ -312,6 +312,16 @@ public static class DpsMeterSettingsUi
         _content!.AddChild(resetScale);
 
         AddSection(DpsLocalization.Get("位置", "Position"));
+        AddToggle(DpsLocalization.Get("屏幕边缘磁吸", "Snap to screen edges"), settings.SnapEnabled, value =>
+        {
+            settings.SnapEnabled = value;
+            SaveAndRefresh();
+        });
+        AddSliderRow(DpsLocalization.Get("吸附距离", "Snap distance"), settings.SnapDistance, 4, 80, 1, value => settings.SnapDistance = (float)value);
+        AddSliderRow(DpsLocalization.Get("屏幕留白", "Screen margin"), settings.ScreenMargin, 0, 64, 1, value => settings.ScreenMargin = (float)value);
+        AddText(DpsLocalization.Get(
+            "拖动标题栏时蓝框预览吸附位置，松开后吸附并保存；四角及四边均可吸附。距离和留白使用视口像素，不随 HUD 缩放倍增；磁吸关闭时不保留屏幕留白。已吸附边缘随缩放或分辨率变化重新对齐。",
+            "Drag the header to preview the drop position with a blue outline; release to snap and save. All four edges and corners are supported. Distance and margin use viewport pixels, independent of HUD scale; disabling snapping also disables the margin. Docked edges realign after scale or resolution changes."), MutedColor);
         var resetPosition = new Button
         {
             FocusMode = Control.FocusModeEnum.None,
@@ -322,9 +332,24 @@ public static class DpsMeterSettingsUi
         {
             settings.PositionX = 18f;
             settings.PositionY = 18f;
+            settings.SnapAnchor = HudSnapAnchor.None;
             SaveAndRefresh();
         };
         _content!.AddChild(resetPosition);
+
+        AddSection(DpsLocalization.Get("战斗低干扰", "Combat visibility"));
+        AddOptionRow(DpsLocalization.Get("低干扰模式", "Low-interference mode"),
+            new[] { DpsLocalization.Get("关闭", "Off"), DpsLocalization.Get("降低透明度", "Fade"), DpsLocalization.Get("自动折叠", "Auto-collapse") },
+            (int)settings.LowInterferenceMode, value =>
+            {
+                settings.LowInterferenceMode = (HudLowInterferenceMode)value;
+                SaveAndRefresh();
+            });
+        AddSliderRow(DpsLocalization.Get("淡化后不透明度", "Faded HUD opacity"), settings.LowInterferenceOpacity,
+            0.25, 0.4, 0.01, value => settings.LowInterferenceOpacity = (float)value);
+        AddText(DpsLocalization.Get(
+            "默认关闭。战斗中鼠标离开 HUD 约 1 秒后淡化或折叠；淡出和移回恢复均约 0.18 秒渐变。打开设置、拖动或战斗结束也会恢复。淡化影响整个 HUD，不覆盖原面板透明度；自动折叠保留标题和按钮，不改变手动折叠状态。",
+            "Off by default. During combat, leaving the HUD for about one second fades or collapses it. Fading out and restoring on hover both take about 0.18 seconds. Opening Settings, dragging, or ending combat also restores it. Fading affects the whole HUD without changing the saved panel opacity. Auto-collapse keeps the header and controls and preserves manual collapse."), MutedColor);
 
         AddSection(DpsLocalization.Get("操作", "Actions"));
         var resetAll = new Button

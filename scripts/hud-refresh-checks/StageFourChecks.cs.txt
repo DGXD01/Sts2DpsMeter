@@ -1,0 +1,242 @@
+using System;
+using System.Reflection;
+using System.Text.Json;
+using Godot;
+using Sts2DpsMeter;
+
+internal static class StageFourChecks
+{
+    private const BindingFlags PrivateStatic = BindingFlags.NonPublic | BindingFlags.Static;
+
+    private static void Require(bool value, string message)
+    {
+        if (!value) throw new InvalidOperationException(message);
+    }
+
+    public static void Run()
+    {
+        CheckSnapping();
+        CheckRestoration();
+        CheckInterference();
+        CheckOpacityTransition();
+        CheckSettingsAndManualCollapse();
+    }
+
+    private static void CheckSnapping()
+    {
+        var viewport = new Vector2(1280, 720);
+        var size = new Vector2(360, 200);
+        var points = new[] { new Vector2(15, 18), new Vector2(900, 10), new Vector2(15, 500), new Vector2(900, 500),
+            new Vector2(15, 200), new Vector2(900, 200), new Vector2(300, 14), new Vector2(300, 500), new Vector2(300, 200) };
+        var anchors = new[] { HudSnapAnchor.Left | HudSnapAnchor.Top, HudSnapAnchor.Right | HudSnapAnchor.Top,
+            HudSnapAnchor.Left | HudSnapAnchor.Bottom, HudSnapAnchor.Right | HudSnapAnchor.Bottom,
+            HudSnapAnchor.Left, HudSnapAnchor.Right, HudSnapAnchor.Top, HudSnapAnchor.Bottom, HudSnapAnchor.None };
+        for (var index = 0; index < points.Length; index++)
+        {
+            var result = DpsHudPlacement.Drop(points[index], size, viewport, true, 24, 12);
+            Require(result.Anchor == anchors[index], $"四角/四边/自由位置吸附错误：{index}");
+            Require(DpsHudPlacement.Restore(result.Position, size, viewport, 12, result.Anchor) == result.Position,
+                "保存并恢复位置不能漂移");
+        }
+        Require(DpsHudPlacement.Drop(new Vector2(36, 200), size, viewport, true, 24, 12).Anchor == HudSnapAnchor.Left &&
+            DpsHudPlacement.Drop(new Vector2(37, 200), size, viewport, true, 24, 12).Anchor == HudSnapAnchor.None,
+            "磁吸应包含距离边界，并在边界外保留自由位置");
+        var unsnapped = DpsHudPlacement.Drop(new Vector2(1, 2), size, viewport, false, 80, 64);
+        Require(unsnapped.Position == new Vector2(1, 2) && unsnapped.Anchor == HudSnapAnchor.None,
+            "关闭磁吸后不应用距离、留白或旧方向");
+        var padded = DpsHudPlacement.Drop(Vector2.Zero, size, viewport, true, 4, 64);
+        Require(padded.Position == new Vector2(64, 64) && padded.Anchor == (HudSnapAnchor.Left | HudSnapAnchor.Top),
+            "候选位置需包含较大留白的边界约束");
+        foreach (var invalid in new[] { (HudSnapAnchor)3, (HudSnapAnchor)12, (HudSnapAnchor)16, (HudSnapAnchor)(-1) })
+            Require(DpsHudPlacement.NormalizeAnchor(invalid) == HudSnapAnchor.None, "冲突方向和非法标志必须回退");
+        Console.WriteLine("通过：四角/四边/自由位置、距离边界、关闭/留白、保存恢复及非法方向回退");
+    }
+
+    private static void CheckRestoration()
+    {
+        var count = 0;
+        foreach (var viewport in new[] { new Vector2(1280, 720), new Vector2(1920, 1080), new Vector2(2560, 1440), new Vector2(3840, 2160) })
+        for (var step = 10; step <= 40; step++)
+        foreach (var logicalSize in new[] { new Vector2(360, 40), new Vector2(360, 300), new Vector2(600, 600) })
+        foreach (var margin in new[] { 0f, 12f, 64f })
+        foreach (var anchor in new[] { HudSnapAnchor.None, HudSnapAnchor.Left, HudSnapAnchor.Right, HudSnapAnchor.Top, HudSnapAnchor.Bottom,
+            HudSnapAnchor.Left | HudSnapAnchor.Top, HudSnapAnchor.Right | HudSnapAnchor.Top,
+            HudSnapAnchor.Left | HudSnapAnchor.Bottom, HudSnapAnchor.Right | HudSnapAnchor.Bottom })
+        {
+            var scale = step / 20f;
+            // 与实际布局先限制尺寸、后定位的顺序一致，超长正文由滚动区承载。
+            var size = logicalSize * scale;
+            size = new Vector2(MathF.Min(size.X, viewport.X), MathF.Min(size.Y, viewport.Y));
+            var position = DpsHudPlacement.Restore(new Vector2(9000.4f, -500), size, viewport, margin, anchor);
+            Require(position.X >= 0 && position.Y >= 0 && position.X + size.X <= viewport.X + 0.001 &&
+                position.Y + size.Y <= viewport.Y + 0.001 && position.X == MathF.Round(position.X) && position.Y == MathF.Round(position.Y),
+                "分辨率、缩放、超长面板与边缘方向组合不能越界或落在小数像素");
+            Require(DpsHudPlacement.Restore(position, size, viewport, margin, anchor) == position, "重复刷新不得累积位置误差");
+            count++;
+        }
+        var bottomRight = HudSnapAnchor.Right | HudSnapAnchor.Bottom;
+        Require(DpsHudPlacement.Restore(Vector2.Zero, new Vector2(540, 360), new Vector2(1920, 1080), 12, bottomRight) == new Vector2(1368, 708) &&
+            DpsHudPlacement.Restore(Vector2.Zero, new Vector2(540, 360), new Vector2(1280, 720), 12, bottomRight) == new Vector2(728, 348),
+            "右下吸附在缩放/分辨率变化后应保持留白");
+        var collapsed = DpsHudPlacement.Restore(Vector2.Zero, new Vector2(540, 60), new Vector2(1280, 720), 12, bottomRight);
+        var expanded = DpsHudPlacement.Restore(collapsed, new Vector2(540, 360), new Vector2(1280, 720), 12, bottomRight);
+        Require(collapsed.Y == 648 && expanded.Y == 348, "折叠和恢复时底边锚点应保持对齐");
+        Require(DpsHudPlacement.Restore(Vector2.One, new Vector2(500, 500), new Vector2(100, 100), 64, bottomRight) == Vector2.Zero,
+            "原生最小尺寸大于视口时应安全回退到原点，不执行反向 Clamp");
+        Console.WriteLine($"通过：{count} 个分辨率/0.5–2.0 缩放/尺寸/留白/方向组合及折叠、视口极小边界");
+    }
+
+    private static void CheckInterference()
+    {
+        var state = new HudLowInterferenceState();
+        for (var frame = 0; frame < 59; frame++)
+        {
+            state.Update(1d / 60, true);
+            Require(!state.Active, "快速划出 HUD 不能立即折叠");
+        }
+        state.Update(1d / 60, true);
+        Require(state.Active, "离开约一秒应进入临时状态");
+        Require(state.Presentation(HudLowInterferenceMode.Off, false, 0.3f) == new HudInterferencePresentation(1, false), "关闭模式不能淡化或折叠");
+        Require(state.Presentation(HudLowInterferenceMode.Fade, false, 0.3f) == new HudInterferencePresentation(0.3f, false), "淡化应影响展示而非手动折叠");
+        Require(state.Presentation(HudLowInterferenceMode.AutoCollapse, false, 0.3f) == new HudInterferencePresentation(1, true), "自动折叠保持可见标题");
+        foreach (var manual in new[] { false, true })
+        {
+            foreach (var mode in Enum.GetValues<HudLowInterferenceMode>())
+            {
+                state.Update(0.1, false); // 对应移回、设置、拖动、隐藏、失焦或战斗结束等恢复条件。
+                Require(!state.Active && state.Presentation(mode, manual, 0.25f) == new HudInterferencePresentation(1, manual),
+                    "退出临时状态必须恢复用户原折叠状态和透明度");
+                for (var frame = 0; frame < 10; frame++) state.Update(0.1, true);
+            }
+        }
+        for (var cycle = 0; cycle < 1000; cycle++)
+        {
+            state.Reset();
+            state.Update(100, true);
+            Require(!state.Active, "恢复后的长帧不能绕过一秒停留门槛");
+            state.Update(double.NaN, true);
+            state.Update(double.PositiveInfinity, true);
+            state.Update(-1, true);
+            Require(!state.Active, "无效帧不能触发或破坏状态");
+            for (var frame = 0; frame < 9; frame++) state.Update(0.1, true);
+            Require(state.Active, "重复进入低干扰状态应保持稳定");
+            state.Update(0, false);
+            Require(!state.Active, "恢复不能等待下一次统计轮询");
+        }
+        Console.WriteLine("通过：一秒门槛、三模式、原手动折叠恢复、长帧/无效帧及 1,000 次进出稳定性");
+    }
+
+    private static void CheckOpacityTransition()
+    {
+        static bool Near(float value, float expected) => MathF.Abs(value - expected) < 0.000001f;
+        var animation = new HudOpacityTransition();
+        var half = HudOpacityTransition.DurationSeconds / 2;
+        Require(animation.Update(0.3f, 0) == 1, "切换淡化目标不能直接跳至目标值");
+        Require(Near(animation.Update(0.3f, half), 0.65f), "过渡中途应有可见的中间透明度");
+        for (var index = 0; index < 1000; index++)
+            Require(Near(animation.Update(0.3f, 0), 0.65f), "重复统计刷新不能重启动画或跳到最终值");
+        Require(animation.Update(0.3f, half) == 0.3f && animation.Update(0.3f, 1) == 0.3f,
+            "淡出应准时到达目标且稳定停留");
+        Require(animation.Update(1, 0) == 0.3f && Near(animation.Update(1, half), 0.65f) && animation.Update(1, half) == 1,
+            "恢复同样应经过中间值，不能直接变浓");
+
+        animation.Reset();
+        var reversing = animation.Update(0.3f, half);
+        Require(animation.Update(1, 0) == reversing, "鼠标中途返回应从当前透明度反向，不发生跳变");
+        var returning = animation.Update(1, half);
+        Require(returning > reversing && returning < 1, "反向后应逐渐恢复");
+        Require(animation.Update(0.25f, 0) == returning && animation.Update(0.25f, HudOpacityTransition.DurationSeconds) == 0.25f,
+            "快速再次移开或更改目标应从当前值连续过渡");
+        animation.Reset();
+        Require(animation.Current == 1, "隐藏/重建/退出时清除旧动画状态");
+        foreach (var invalid in new[] { double.NaN, double.PositiveInfinity, -1d })
+            Require(animation.Update(0.3f, invalid) == 1, "无效耗时不能破坏当前透明度");
+        Require(animation.Update(0.3f, 10) == 0.3f && animation.Update(float.NaN, 10) == 1,
+            "长帧不能越界，非法目标安全恢复");
+
+        foreach (var fps in new[] { 30, 60, 144 })
+        foreach (var faded in new[] { 0.25f, 0.3f, 0.4f })
+        {
+            animation.Reset();
+            var frames = (int)Math.Ceiling(HudOpacityTransition.DurationSeconds * fps) + 1;
+            var prior = 1f;
+            for (var index = 0; index < frames; index++)
+            {
+                var value = animation.Update(faded, 1d / fps);
+                Require(value <= prior && value >= faded, "各帧率下淡出应单调且不超过目标");
+                prior = value;
+            }
+            Require(animation.Current == faded, "各帧率均须在约定时间内结束淡出");
+            for (var index = 0; index < frames; index++)
+            {
+                var value = animation.Update(1, 1d / fps);
+                Require(value >= prior && value <= 1, "各帧率下恢复应单调且不超过正常透明度");
+                prior = value;
+            }
+            Require(animation.Current == 1, "各帧率均须恢复原始调制值");
+        }
+        Console.WriteLine("通过：双向透明度渐变、中间值、重复刷新不重启、快速反向/改目标、重置、无效/长帧及 30/60/144 FPS；实机观感待复验");
+    }
+
+    private static void CheckSettingsAndManualCollapse()
+    {
+        var normalize = typeof(DpsMeterSettings).GetMethod("Normalize", PrivateStatic)!;
+        var clone = typeof(DpsMeterSettings).GetMethod("Clone", PrivateStatic)!;
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
+        foreach (var schema in new[] { 4, 5 })
+        {
+            var old = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + schema + ",\"panelOpacity\":0.63,\"uiScale\":1.3,\"maxRows\":7,\"positionX\":400,\"summaryDps\":true}", options)!;
+            normalize.Invoke(null, new object[] { old });
+            Require(old.SchemaVersion == 6 && old.PanelOpacity == 0.63f && old.UiScale == 1.3f && old.MaxRows == 7 && old.PositionX == 400 &&
+                old.SummaryDps && old.SnapEnabled && old.SnapDistance == 24 && old.ScreenMargin == 12 && old.SnapAnchor == HudSnapAnchor.None &&
+                old.LowInterferenceMode == HudLowInterferenceMode.Off, "旧配置升级须保留原值，新低干扰默认关闭");
+        }
+        foreach (var mode in Enum.GetValues<HudLowInterferenceMode>())
+        foreach (var enabled in new[] { false, true })
+        {
+            var settings = new DpsMeterSettingsData { SnapEnabled = enabled, SnapDistance = 35, ScreenMargin = 23,
+                SnapAnchor = HudSnapAnchor.Right | HudSnapAnchor.Bottom, LowInterferenceMode = mode, LowInterferenceOpacity = 0.36f, PanelOpacity = 0.82f };
+            normalize.Invoke(null, new object[] { settings });
+            var json = JsonSerializer.Serialize(settings, options);
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(JsonSerializer.Serialize(clone.Invoke(null, new object[] { settings }), options), options)!;
+            Require(JsonSerializer.Serialize(restored, options) == json, "Clone/JSON 必须完整保留全部新增字段和原设置");
+            var state = new HudLowInterferenceState();
+            for (var frame = 0; frame < 10; frame++) state.Update(0.1, true);
+            state.Presentation(settings.LowInterferenceMode, true, settings.LowInterferenceOpacity);
+            state.Reset();
+            Require(JsonSerializer.Serialize(settings, options) == json, "临时淡化和折叠不能写回任何永久设置");
+        }
+        var bad = new DpsMeterSettingsData { SnapDistance = float.NaN, ScreenMargin = float.PositiveInfinity,
+            SnapAnchor = (HudSnapAnchor)999, LowInterferenceMode = (HudLowInterferenceMode)999, LowInterferenceOpacity = float.NaN };
+        normalize.Invoke(null, new object[] { bad });
+        Require(bad.SnapDistance == 24 && bad.ScreenMargin == 12 && bad.SnapAnchor == HudSnapAnchor.None &&
+            bad.LowInterferenceMode == HudLowInterferenceMode.Off && bad.LowInterferenceOpacity == 0.3f, "无效新字段须恢复安全默认值");
+
+        var current = typeof(DpsMeterSettings).GetField("_current", PrivateStatic)!;
+        var collapsedField = typeof(DpsMeterUi).GetField("_contentCollapsed", PrivateStatic)!;
+        var runtime = (HudLowInterferenceState)typeof(DpsMeterUi).GetField("LowInterference", PrivateStatic)!.GetValue(null)!;
+        var collapse = typeof(DpsMeterUi).GetMethod("OnCollapsePressed", PrivateStatic)!;
+        var prior = current.GetValue(null);
+        var priorCollapsed = collapsedField.GetValue(null);
+        try
+        {
+            var settings = new DpsMeterSettingsData { LowInterferenceMode = HudLowInterferenceMode.AutoCollapse, PanelOpacity = 0.77f };
+            current.SetValue(null, settings);
+            collapsedField.SetValue(null, false);
+            runtime.Reset();
+            for (var frame = 0; frame < 10; frame++) runtime.Update(0.1, true);
+            collapse.Invoke(null, null);
+            Require(!(bool)collapsedField.GetValue(null)! && !runtime.Active && settings.PanelOpacity == 0.77f,
+                "真实展开按钮应解除临时折叠，不能反过来把手动状态永久折叠");
+            collapse.Invoke(null, null);
+            Require((bool)collapsedField.GetValue(null)!, "普通点击仍须保留手动折叠");
+        }
+        finally
+        {
+            current.SetValue(null, prior);
+            collapsedField.SetValue(null, priorCollapsed);
+            runtime.Reset();
+        }
+        Console.WriteLine("通过：Schema 4/5 升级、三模式/磁吸开关 Clone+JSON、永久设置不变、非法字段及真实折叠按钮入口");
+    }
+}
