@@ -21,6 +21,37 @@ internal static class StageThreeChecks
         CheckSorting();
         CheckRealViews();
         CheckRecentAndTiming();
+        CheckHeaderTooltipUpdates();
+    }
+
+    private static void CheckHeaderTooltipUpdates()
+    {
+        var state = new HudTitleTooltipState();
+        var settings = new DpsMeterSettingsData { SummaryDps = true, SummaryDpt = true };
+        var values = new HudSummaryValues(73, 0, 6, 2, 0.7, 36.5);
+        var title = DpsHudSummary.Title(settings, values, HudScope.Combat, false, null, true);
+        Require(state.Update(title) == title && state.Enter() == title, "首次悬停必须获得未裁切的全部三项摘要");
+        Require(title.Contains("伤害 73") && title.Contains("0.7 DPS") && title.Contains("36.5 DPT"),
+            "提示源必须保留摘要数据，不能读取屏幕上的省略结果");
+        var latest = title;
+        for (var index = 1; index <= 1000; index++)
+        {
+            latest = DpsHudSummary.Title(settings, values with { Dps = index / 10d }, HudScope.Combat, false, null, true);
+            Require(state.Update(latest) == title && state.Enter() == title,
+                "连续 DPS 刷新及重复进入信号不能改变同一次悬停文本");
+        }
+        Require(state.Exit() == latest && state.Enter() == latest, "移开再悬停必须取得最新摘要而非永久冻结");
+        state.Reset();
+        Require(state.Enter() == string.Empty, "控件重建后不能保留旧战斗的悬停状态");
+        state.Exit();
+        var longTitle = DpsHudSummary.Title(settings, values, HudScope.Combat, true, new string('长', 120), false);
+        Require(state.Update(longTitle) == longTitle && state.Enter() == longTitle && longTitle.Contains(new string('长', 120)),
+            "长名称和英文摘要不能在提示状态中丢失或裁切");
+        state.Exit();
+        settings.SummaryDamage = settings.SummaryDps = settings.SummaryDpt = false;
+        var scopeOnly = DpsHudSummary.Title(settings, values, HudScope.Turn, false, null, true);
+        Require(state.Update(scopeOnly) == "本回合" && state.Enter() == "本回合", "摘要全关后的提示不得残留旧指标");
+        Console.WriteLine("通过：标题全文、1,000 次 DPS 更新时悬停快照稳定、移开刷新、重建清理及长名称/双语/全关边界；原生悬停/拖动待复验");
     }
 
     private static PlayerStatsSnapshot Player()

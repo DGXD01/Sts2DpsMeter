@@ -48,6 +48,7 @@ public static partial class DpsMeterUi
     private static int _immediateRefreshRequested;
     private static int _deferredPanelFitQueued;
     private static readonly List<DamageSectionControls> SectionPool = new();
+    private static readonly HudTitleTooltipState HeaderTooltip = new();
     private static PanelLayoutState? _lastLayoutState;
 
     public static void EnsureAttached()
@@ -137,6 +138,7 @@ public static partial class DpsMeterUi
         var snapshot = DpsStats.GetSnapshot();
 
         _panel!.Visible = _visible;
+        if (!_visible) HeaderTooltip.Exit();
         if (!_dragging && (_lastLayoutState is null ||
             settings.PositionX != _lastLayoutState.PositionX ||
             settings.PositionY != _lastLayoutState.PositionY))
@@ -159,7 +161,7 @@ public static partial class DpsMeterUi
         }
         var navigationChanged = UpdateNavigationState(snapshot.Players.Count);
 
-        _header.TooltipText = view.Title;
+        SetHeaderTooltipText(HeaderTooltip.Update(view.Title));
         var language = DpsLocalization.LanguageCode;
         var contentChanged = !_contentCollapsed && UpdateDamageSections(settings, view, language);
         var layoutState = new PanelLayoutState(
@@ -948,6 +950,7 @@ public static partial class DpsMeterUi
         _previousPlayerButton = CreateArrowButton("◀", OnPreviousPlayerPressed);
         headerRow.AddChild(_previousPlayerButton);
 
+        HeaderTooltip.Reset();
         _header = new Label
         {
             Text = L("伤害：0", "Damage: 0"),
@@ -956,12 +959,15 @@ public static partial class DpsMeterUi
             SizeFlagsHorizontal = Control.SizeFlags.ExpandFill,
             ClipText = true,
             TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
-            MouseFilter = Control.MouseFilterEnum.Ignore
+            // 接收原生悬停提示，同时将点击/拖动继续传给父面板。
+            MouseFilter = Control.MouseFilterEnum.Pass
         };
         _header.AddThemeColorOverride("font_color", TitleBlue);
         _header.AddThemeColorOverride("font_outline_color", Colors.Black);
         _header.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
         _header.AddThemeFontSizeOverride("font_size", DpsHudTypography.HeaderSize);
+        _header.MouseEntered += () => SetHeaderTooltipText(HeaderTooltip.Enter());
+        _header.MouseExited += () => SetHeaderTooltipText(HeaderTooltip.Exit());
         headerRow.AddChild(_header);
 
         _nextPlayerButton = CreateArrowButton("▶", OnNextPlayerPressed);
@@ -1086,6 +1092,11 @@ public static partial class DpsMeterUi
         option.AddThemeStyleboxOverride("hover", hover);
         option.AddThemeStyleboxOverride("pressed", pressed);
         option.AddThemeStyleboxOverride("focus", hover);
+    }
+
+    private static void SetHeaderTooltipText(string text)
+    {
+        if (IsAlive(_header) && _header!.TooltipText != text) _header.TooltipText = text;
     }
 
     private static void OnPanelGuiInput(InputEvent @event)

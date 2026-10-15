@@ -95,3 +95,34 @@ internal static class DpsHudSummary
         return parts.Count == 0 ? title : title + " · " + string.Join(" · ", parts.Take(MaxFields));
     }
 }
+
+// 悬停时固定一份完整标题，避免持续变化的 DPS 文本让原生提示在鼠标轻微移动时被取消。
+internal sealed class HudTitleTooltipState
+{
+    private string _latest = string.Empty;
+    private string? _hoverText;
+
+    internal string Update(string title)
+    {
+        _latest = title;
+        return _hoverText ?? title;
+    }
+
+    internal string Enter()
+    {
+        _hoverText ??= _latest;
+        return _hoverText;
+    }
+
+    internal string Exit()
+    {
+        _hoverText = null;
+        return _latest;
+    }
+
+    internal void Reset()
+    {
+        _latest = string.Empty;
+        _hoverText = null;
+    }
+}
