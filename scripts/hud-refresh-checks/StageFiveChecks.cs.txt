@@ -1,0 +1,185 @@
+using System;
+using System.Collections;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using Sts2DpsMeter;
+
+internal static class StageFiveChecks
+{
+    private const BindingFlags Flags = BindingFlags.Static | BindingFlags.NonPublic;
+    private static void Require(bool value, string message)
+    {
+        if (!value) throw new InvalidOperationException(message);
+    }
+    private static PlayerStatsSnapshot Player(ulong id, bool local = false, long damage = 100) => StageThreeChecks.Player() with
+    {
+        PlayerNetId = id, IsLocalPlayer = local, TotalDamage = damage, NameColorHex = local ? "A1B2C3" : "FFEEDD"
+    };
+    private static CombatStatsSnapshot Battle(params PlayerStatsSnapshot[] players) => new(true, 10, 2, players, 4, 10);
+
+    public static void Run()
+    {
+        CheckSelection();
+        CheckDefaultsAndLifecycle();
+        CheckConfiguration();
+        CheckActualViews();
+    }
+
+    private static void CheckSelection()
+    {
+        var other = Player(8) with { DisplayName = "同名" };
+        var own = Player(42, true, 60) with { DisplayName = "同名" };
+        var snapshot = Battle(other, own);
+        var state = new HudPlayerSelection();
+        state.Sync(snapshot, HudPlayerView.CurrentPlayer);
+        Require(state.Index == 0 && state.Scope == HudScope.Combat, "默认当前玩家保留首位视图");
+        state.Choose(HudPlayerView.Self, snapshot.Players);
+        Require(state.Index == 1 && state.View == HudPlayerView.Self, "自己使用本地标记而非名字或首位");
+        var reordered = snapshot with { Players = new[] { own, other } };
+        Require(!state.Sync(reordered, HudPlayerView.Team) && state.Index == 0 && state.View == HudPlayerView.Self,
+            "伤害排序重排不应换人或清详情，修改默认不能覆盖当前手选");
+        state.SetScope(HudScope.Turn, reordered.Players);
+        state.Choose(HudPlayerView.Team, reordered.Players);
+        Require(state.Scope == HudScope.Team && !state.Move(1, reordered.Players), "全队与 Scope 联动，箭头不可改写全队");
+        state.Choose(HudPlayerView.Self, reordered.Players);
+        Require(state.Scope == HudScope.Turn && state.Index == 0, "从全队回自己应恢复本回合范围");
+        Require(state.Move(1, reordered.Players) && state.View == HudPlayerView.CurrentPlayer && state.Index == 1 && state.Scope == HudScope.Turn,
+            "自己使用箭头应进入当前玩家，保持时间范围");
+        Require(state.Move(1, reordered.Players) && state.Index == 0 && state.Move(-1, reordered.Players) && state.Index == 1,
+            "左右箭头应循环切换");
+        state.SetScope(HudScope.Team, reordered.Players);
+        Require(state.View == HudPlayerView.Team, "范围框选择全队应同步快捷框");
+        state.SetScope(HudScope.Combat, reordered.Players);
+        Require(state.View == HudPlayerView.CurrentPlayer && state.Index == 1, "离开全队不能无故切到首位");
+        state.Sync(snapshot, HudPlayerView.CurrentPlayer);
+        Require(state.Index == 0, "当前玩家按 ID 在重排后保持同一个对象");
+
+        var missing = Battle(other, Player(9));
+        state.Choose(HudPlayerView.Self, missing.Players);
+        Require(state.Index == -1 && state.View == HudPlayerView.Self, "自己未识别时不得冒用他人");
+        state.Sync(missing with { Players = new[] { other, own } }, HudPlayerView.Team);
+        Require(state.Index == 1 && state.View == HudPlayerView.Self, "本地身份补齐后自动恢复自己");
+        state.Choose(HudPlayerView.CurrentPlayer, new[] { other, own });
+        state.Sync(Battle(Player(0, true), Player(9)), HudPlayerView.CurrentPlayer);
+        Require(state.Index == 0, "选中玩家离开时优先安全回退本地玩家，NetId 零也有效");
+        state.Sync(Battle(), HudPlayerView.Team);
+        Require(state.Index == -1 && state.Scope != HudScope.Team && !state.Move(1, Array.Empty<PlayerStatsSnapshot>()), "空队伍安全回退");
+        state.Sync(Battle(own), HudPlayerView.Team);
+        state.Choose(HudPlayerView.Team, new[] { own });
+        Require(state.View == HudPlayerView.CurrentPlayer && state.Scope != HudScope.Team, "单人不出现多人重复视图");
+        Require(snapshot.Players[0] == other && snapshot.Players[1] == own && snapshot.Players.Sum(p => p.TotalDamage) == 160,
+            "所有选择操作不能改动统计快照");
+        Console.WriteLine("通过：三视图/范围同步、自己身份等待/恢复、箭头循环/退出自己、同名/排序/玩家离开与空/单人安全回退");
+    }
+
+    private static void CheckDefaultsAndLifecycle()
+    {
+        var snapshot = Battle(Player(1), Player(2, true));
+        foreach (var view in Enum.GetValues<HudPlayerView>())
+        {
+            var state = new HudPlayerSelection();
+            state.Sync(snapshot, view);
+            Require(state.View == view, "每种多人默认视图须在新战斗应用");
+            state.Choose(HudPlayerView.CurrentPlayer, snapshot.Players);
+            state.Move(1, snapshot.Players);
+            var manualId = snapshot.Players[state.Index].PlayerNetId;
+            for (var index = 0; index < 1000; index++) state.Sync(snapshot with { ElapsedSeconds = 10 + index }, HudPlayerView.Team);
+            Require(state.View == HudPlayerView.CurrentPlayer && snapshot.Players[state.Index].PlayerNetId == manualId, "轮询/修改默认不应重置当前手选");
+            state.Sync(snapshot with { CombatId = 11, ElapsedSeconds = 200 }, HudPlayerView.Team);
+            Require(state.View == HudPlayerView.Team, "即使漏过结束帧且新计时更大，新战斗 ID 仍需应用默认");
+        }
+        var pending = new HudPlayerSelection();
+        pending.Sync(snapshot with { Players = Array.Empty<PlayerStatsSnapshot>() }, HudPlayerView.Self);
+        pending.Sync(snapshot with { Players = new[] { Player(1) } }, HudPlayerView.Self);
+        pending.Sync(snapshot, HudPlayerView.Self);
+        Require(pending.View == HudPlayerView.Self && pending.Index == 1, "玩家逐步登记后应在首次多人时应用默认");
+        pending.Sync(snapshot with { IsActive = false }, HudPlayerView.Team);
+        Require(pending.View == HudPlayerView.Self, "战斗结束保持当前视图，不套用新默认");
+
+        DpsStats.ResetRun();
+        DpsStats.BeginCombat();
+        var first = DpsStats.GetSnapshot();
+        DpsStats.Tick(5);
+        DpsStats.EndCombat();
+        Require(DpsStats.GetSnapshot().CombatId == first.CombatId, "结束不能伪造新战斗 ID");
+        DpsStats.BeginCombat();
+        var next = DpsStats.GetSnapshot();
+        Require(next.CombatId > first.CombatId && first.ElapsedSeconds == 0, "真实 BeginCombat 更新 ID 且先前快照保持只读");
+        DpsStats.ResetRun();
+        DpsStats.BeginCombat();
+        Require(DpsStats.GetSnapshot().CombatId > next.CombatId, "新跑图不能复用旧 ID 导致默认不生效");
+        DpsStats.ResetRun();
+        Console.WriteLine("通过：三个默认、每战仅一次、1,000 次刷新保留手选、延迟队伍登记及真实战斗 ID 生命周期");
+    }
+
+    private static void CheckConfiguration()
+    {
+        var normalize = typeof(DpsMeterSettings).GetMethod("Normalize", Flags)!;
+        var clone = typeof(DpsMeterSettings).GetMethod("Clone", Flags)!;
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
+        foreach (var schema in new[] { 4, 5, 6 })
+        {
+            var old = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + schema + ",\"maxRows\":9,\"panelOpacity\":0.81,\"summaryDps\":true,\"snapEnabled\":false}", options)!;
+            normalize.Invoke(null, new object[] { old });
+            Require(old.SchemaVersion == 7 && old.MultiplayerDefaultView == HudPlayerView.CurrentPlayer && old.MaxRows == 9 && old.PanelOpacity == 0.81f &&
+                old.SummaryDps && !old.SnapEnabled, "旧配置升级不得丢失原值，默认当前玩家");
+        }
+        foreach (var mode in Enum.GetValues<HudPlayerView>().Append((HudPlayerView)999))
+        {
+            var settings = new DpsMeterSettingsData { MultiplayerDefaultView = mode, LowInterferenceMode = HudLowInterferenceMode.Fade,
+                LowInterferenceOpacity = 0.36f, SnapAnchor = HudSnapAnchor.Right | HudSnapAnchor.Bottom };
+            normalize.Invoke(null, new object[] { settings });
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(JsonSerializer.Serialize(clone.Invoke(null, new object[] { settings }), options), options)!;
+            Require(restored.MultiplayerDefaultView == HudPlayerSelection.Normalize(mode) && JsonSerializer.Serialize(restored, options) == JsonSerializer.Serialize(settings, options),
+                "新默认与已有字段须通过真实 Clone/JSON 保存恢复，非法默认回退");
+        }
+        Require(HudPlayerSelection.Label(HudPlayerView.CurrentPlayer, true) == "当前玩家" &&
+            HudPlayerSelection.Label(HudPlayerView.Self, false) == "Self" && HudPlayerSelection.Label(HudPlayerView.Team, false) == "Team", "视图标签必须中英文一致");
+        Console.WriteLine("通过：多人默认设置 Schema 4/5/6 升级、Clone/JSON、非法枚举及双语标签");
+    }
+
+    private static void CheckActualViews()
+    {
+        var selected = typeof(DpsMeterUi).GetField("_selectedPlayerIndex", Flags)!;
+        var scope = typeof(DpsMeterUi).GetField("_scopeIndex", Flags)!;
+        var awaiting = typeof(DpsMeterUi).GetField("_selfAwaitingLocal", Flags)!;
+        var build = typeof(DpsMeterUi).GetMethod("BuildDamageView", Flags)!;
+        var oldIndex = selected.GetValue(null); var oldScope = scope.GetValue(null); var oldAwait = awaiting.GetValue(null);
+        try
+        {
+            var snapshot = Battle(Player(1), Player(2, true, 60));
+            var state = new HudPlayerSelection();
+            state.Sync(snapshot, HudPlayerView.Self);
+            var settings = new DpsMeterSettingsData { ShowTakenBreakdown = false };
+            object View(CombatStatsSnapshot data)
+            {
+                selected.SetValue(null, state.Index); scope.SetValue(null, (int)state.Scope);
+                awaiting.SetValue(null, state.View == HudPlayerView.Self && state.Index < 0);
+                return build.Invoke(null, new object[] { settings, data })!;
+            }
+            object[] Sections(object view) => ((IEnumerable)view.GetType().GetProperty("Sections")!.GetValue(view)!).Cast<object>().ToArray();
+            long Total(object section) => (long)section.GetType().GetProperty("Total")!.GetValue(section)!;
+            Require(Total(Sections(View(snapshot))[0]) == 60, "真实自己视图必须读取本地玩家伤害");
+            state.SetScope(HudScope.Turn, snapshot.Players);
+            Require(Total(Sections(View(snapshot))[0]) == 30, "自己视图的本回合不能读取全场");
+            state.Choose(HudPlayerView.Team, snapshot.Players);
+            var team = Sections(View(snapshot))[0];
+            Require(Total(team) == 160, "真实全队视图必须使用队伍完整总量");
+            var rows = ((IEnumerable)team.GetType().GetProperty("Rows")!.GetValue(team)!).Cast<DamageRowData>().ToArray();
+            Require(rows.Length == 2 && rows.Count(r => r.IsLocalPlayer) == 1 && rows.Single(r => r.IsLocalPlayer).NameColorHex == "A1B2C3",
+                "全队排行须保留本地身份和职业颜色");
+            var noLocal = snapshot with { Players = new[] { Player(1), Player(3) } };
+            state.Choose(HudPlayerView.Self, noLocal.Players);
+            var waiting = Sections(View(noLocal));
+            Require(waiting.Length == 1 && Total(waiting[0]) == 0 && ((string)waiting[0].GetType().GetProperty("Heading")!.GetValue(waiting[0])!).Contains("Waiting"),
+                "本地未识别须显示等待信息，不把他人伤害放入自己");
+            var rich = typeof(DpsMeterUi).GetMethod("BuildRichRowText", Flags)!;
+            var text = (string)rich.Invoke(null, new object[] { new DamageRowData("[b]同名[/b]", 0, NameColorHex: "A1B2C3", IsLocalPlayer: true) })!;
+            Require(text.Contains("#A1B2C3") && text.Contains("(You)") && !text.Contains("[b]同名[/b]"),
+                "快捷身份与排行共享职业色/你标记，玩家名富文本必须转义");
+        }
+        finally { selected.SetValue(null, oldIndex); scope.SetValue(null, oldScope); awaiting.SetValue(null, oldAwait); }
+        Console.WriteLine("通过：真实视图入口的自己/本回合/全队总量、本地缺失等待及职业色/你标记/富文本转义");
+    }
+}

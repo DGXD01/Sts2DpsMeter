@@ -153,6 +153,8 @@ public static partial class DpsMeterUi
 
         var settings = DpsMeterSettings.Current;
         var snapshot = DpsStats.GetSnapshot();
+        if (PlayerSelection.Sync(snapshot, settings.MultiplayerDefaultView)) ResetContentScroll();
+        ApplyPlayerSelection(snapshot);
         _combatActive = snapshot.IsActive;
         if (!_combatActive || !_visible || DpsMeterSettingsUi.IsVisible) LowInterference.Reset();
         var presentation = InteractionPresentation;
@@ -183,6 +185,7 @@ public static partial class DpsMeterUi
             _header.Text = view.Title;
         }
         var navigationChanged = UpdateNavigationState(snapshot.Players.Count);
+        var playerViewChanged = UpdatePlayerViewControls(snapshot, collapsed);
 
         HeaderTooltip.Update(view.Title);
         var language = DpsLocalization.LanguageCode;
@@ -191,7 +194,7 @@ public static partial class DpsMeterUi
             language, settings.CompactMode,
             settings.UiScale, settings.PositionX, settings.PositionY,
             collapsed, GetViewportSize(), settings.SnapEnabled, settings.ScreenMargin, settings.SnapAnchor);
-        if (contentChanged || navigationChanged || scopeChanged || layoutState != _lastLayoutState)
+        if (contentChanged || navigationChanged || scopeChanged || playerViewChanged || layoutState != _lastLayoutState)
         {
             _lastLayoutState = layoutState;
             FitPanelToContent(settings);
@@ -224,12 +227,14 @@ public static partial class DpsMeterUi
         var isMultiplayer = snapshot.Players.Count > 1;
         var scope = DpsHudScope.Normalize((HudScope)_scopeIndex, snapshot.Players.Count);
         _scopeIndex = (int)scope;
-        _selectedPlayerIndex = Math.Clamp(_selectedPlayerIndex, 0, Math.Max(0, snapshot.Players.Count - 1));
-        var player = snapshot.Players.Count > 0 ? snapshot.Players[_selectedPlayerIndex] : null;
+        _selectedPlayerIndex = _selectedPlayerIndex < 0 ? -1 : Math.Clamp(_selectedPlayerIndex, 0, Math.Max(0, snapshot.Players.Count - 1));
+        var player = snapshot.Players.Count > 0 && _selectedPlayerIndex >= 0 ? snapshot.Players[_selectedPlayerIndex] : null;
         DamageViewData view;
         if (player is null)
         {
-            view = new DamageViewData(string.Empty, Array.Empty<DamageSectionData>());
+            view = new DamageViewData(string.Empty, _selfAwaitingLocal
+                ? new[] { new DamageSectionData(L("等待本地玩家数据", "Waiting for local player data"), 0, Array.Empty<DamageRowData>()) }
+                : Array.Empty<DamageSectionData>());
         }
         else if (!HasEnabledModules(settings, isMultiplayer))
         {
@@ -807,21 +812,20 @@ public static partial class DpsMeterUi
 
     private static void MovePlayerSelection(int delta)
     {
-        var players = DpsStats.GetSnapshot().Players;
-        if (players.Count <= 1 || _scopeIndex == ScopeTeam)
-        {
-            return;
-        }
-
-        _selectedPlayerIndex = (_selectedPlayerIndex + delta + players.Count) % players.Count;
+        var snapshot = DpsStats.GetSnapshot();
+        PlayerSelection.Sync(snapshot, DpsMeterSettings.Current.MultiplayerDefaultView);
+        if (!PlayerSelection.Move(delta, snapshot.Players)) return;
+        ApplyPlayerSelection(snapshot);
         ResetContentScroll();
         Refresh();
     }
 
     private static void OnScopeSelected(long index)
     {
-        _scopeIndex = _scopeOption!.GetItemId((int)index);
-        _selectedPlayerIndex = 0;
+        var snapshot = DpsStats.GetSnapshot();
+        PlayerSelection.Sync(snapshot, DpsMeterSettings.Current.MultiplayerDefaultView);
+        PlayerSelection.SetScope((HudScope)_scopeOption!.GetItemId((int)index), snapshot.Players);
+        ApplyPlayerSelection(snapshot);
         ResetContentScroll();
         Refresh();
     }
@@ -858,6 +862,8 @@ public static partial class DpsMeterUi
         }
 
         var chromeMinimum = _panelStyle!.GetMinimumSize() + _headerRow!.GetCombinedMinimumSize();
+        if (IsAlive(_playerViewRow) && _playerViewRow!.Visible)
+            chromeMinimum.Y += _playerViewRow.GetCombinedMinimumSize().Y + _layout!.GetThemeConstant("separation");
         var collapsed = InteractionPresentation.Collapsed;
         if (!collapsed)
         {
@@ -1024,6 +1030,8 @@ public static partial class DpsMeterUi
         _collapseButton = CreateArrowButton(_contentCollapsed ? "+" : "−", OnCollapsePressed);
         _collapseButton.TooltipText = _contentCollapsed ? L("展开伤害明细", "Expand damage details") : L("收起伤害明细", "Collapse damage details");
         headerRow.AddChild(_collapseButton);
+
+        BuildPlayerViewRow(layout);
 
         _contentDivider = new ColorRect
         {

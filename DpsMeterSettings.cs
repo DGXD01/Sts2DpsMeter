@@ -15,7 +15,8 @@ public enum HudTooltipDetail
 
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 6;
+    public int SchemaVersion { get; set; } = 7;
+    public HudPlayerView MultiplayerDefaultView { get; set; } = HudPlayerView.CurrentPlayer;
     public bool SnapEnabled { get; set; } = true;
     public float SnapDistance { get; set; } = 24f;
     public float ScreenMargin { get; set; } = 12f;
@@ -63,7 +64,7 @@ public static class DpsMeterSettings
     public const float MaxUiScale = 2.0f;
     public const float UiScaleStep = 0.05f;
 
-    private const int CurrentSchemaVersion = 6;
+    private const int CurrentSchemaVersion = 7;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -179,6 +180,7 @@ public static class DpsMeterSettings
         return new DpsMeterSettingsData
         {
             SchemaVersion = source.SchemaVersion,
+            MultiplayerDefaultView = source.MultiplayerDefaultView,
             SnapEnabled = source.SnapEnabled,
             SnapDistance = source.SnapDistance,
             ScreenMargin = source.ScreenMargin,
@@ -224,6 +226,7 @@ public static class DpsMeterSettings
     private static void Normalize(DpsMeterSettingsData settings)
     {
         settings.SchemaVersion = CurrentSchemaVersion;
+        settings.MultiplayerDefaultView = HudPlayerSelection.Normalize(settings.MultiplayerDefaultView);
         settings.SnapDistance = float.IsFinite(settings.SnapDistance) ? Math.Clamp(settings.SnapDistance, 4, 80) : 24;
         settings.ScreenMargin = float.IsFinite(settings.ScreenMargin) ? Math.Clamp(settings.ScreenMargin, 0, 64) : 12;
         settings.SnapAnchor = DpsHudPlacement.NormalizeAnchor(settings.SnapAnchor);

@@ -181,6 +181,19 @@ public static class DpsMeterSettingsUi
             SaveAndRefresh();
         });
 
+        AddSection(DpsLocalization.Get("多人视图", "Multiplayer View"));
+        AddOptionRow(DpsLocalization.Get("多人默认视图", "Default multiplayer view"),
+            new[] { HudPlayerSelection.Label(HudPlayerView.CurrentPlayer, DpsLocalization.IsChinese),
+                HudPlayerSelection.Label(HudPlayerView.Self, DpsLocalization.IsChinese), HudPlayerSelection.Label(HudPlayerView.Team, DpsLocalization.IsChinese) },
+            (int)settings.MultiplayerDefaultView, value =>
+            {
+                settings.MultiplayerDefaultView = (HudPlayerView)value;
+                SaveAndRefresh();
+            });
+        AddText(DpsLocalization.Get(
+            "默认视图在进入新多人战斗时应用；当前战斗可用 HUD 快捷框切换当前玩家、自己、全队。左右箭头会切到当前玩家视图；全队时箭头禁用。自己按本地身份识别，未识别时等待，不显示其他玩家冒充自己。单人不显示快捷框。",
+            "The default applies when entering a new multiplayer combat. Use the HUD selector for Player, Self, or Team in the current combat. Arrows switch to Player view and are disabled in Team. Self waits for local-player identification instead of showing another player. The selector is hidden in single-player."), MutedColor);
+
         AddSection(DpsLocalization.Get("标题摘要", "Title Summary"));
         AddSummaryToggle(DpsLocalization.Get("摘要：总伤害", "Summary: damage"), settings.SummaryDamage, value => settings.SummaryDamage = value);
         AddSummaryToggle(DpsLocalization.Get("摘要：DPS", "Summary: DPS"), settings.SummaryDps, value => settings.SummaryDps = value);

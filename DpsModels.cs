@@ -103,4 +103,5 @@ public sealed record CombatStatsSnapshot(
     double ElapsedSeconds,
     int CurrentTurn,
     IReadOnlyList<PlayerStatsSnapshot> Players,
-    double CurrentTurnElapsedSeconds = 0);
+    double CurrentTurnElapsedSeconds = 0,
+    long CombatId = 0);

@@ -33,6 +33,7 @@ public static class DpsStats
     private static double _elapsedSeconds;
     private static double _currentTurnElapsedSeconds;
     private static long _damageEventSequence;
+    private static long _combatId;
     private static int _currentTurn = 1;
 
     public static void ResetRun()
@@ -58,6 +59,7 @@ public static class DpsStats
     {
         lock (SyncRoot)
         {
+            _combatId++;
             Players.Clear();
             PendingDoomKills.Clear();
             _active = true;
@@ -581,7 +583,7 @@ public static class DpsStats
                     BuildTurnSnapshots(player)))
                 .ToArray();
 
-            return new CombatStatsSnapshot(_active, _elapsedSeconds, _currentTurn, players, _currentTurnElapsedSeconds);
+            return new CombatStatsSnapshot(_active, _elapsedSeconds, _currentTurn, players, _currentTurnElapsedSeconds, _combatId);
         }
     }
 

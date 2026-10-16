@@ -57,7 +57,7 @@ public static partial class DpsMeterUi
 
         var wasActive = LowInterference.Active;
         var overHud = new Rect2(Vector2.Zero, _panel.Size).HasPoint(_panel.GetLocalMousePosition());
-        var scopeOpen = IsAlive(_scopeOption) && _scopeOption!.GetPopup().Visible;
+        var scopeOpen = (IsAlive(_scopeOption) && _scopeOption!.GetPopup().Visible) || IsPlayerViewPopupOpen;
         LowInterference.Update(delta, _combatActive && _visible && focused && !_dragging &&
             !overHud && !DpsMeterSettingsUi.IsVisible && !scopeOpen && settings.LowInterferenceMode != HudLowInterferenceMode.Off);
         if (wasActive != LowInterference.Active) RequestImmediateRefresh();

@@ -53,7 +53,7 @@ public static partial class DpsMeterUi
         if (!IsAlive(_header) || !IsAlive(_panel) || !IsAlive(_headerTooltipPanel) ||
             !IsAlive(_headerTooltipLabel) || !_visible || !_panel!.IsVisibleInTree() ||
             _dragging || Input.GetMouseButtonMask() != 0 || !_panel.GetWindow().HasFocus() ||
-            (IsAlive(_scopeOption) && _scopeOption!.GetPopup().Visible))
+            (IsAlive(_scopeOption) && _scopeOption!.GetPopup().Visible) || IsPlayerViewPopupOpen)
         {
             HideHeaderTooltip();
             return;
