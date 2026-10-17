@@ -48,17 +48,37 @@ internal static class DpsHudRowFields
         };
     }
 
-    internal static void LimitWidths(float[] widths, float available, HudRowField fields)
+    internal static float NameMinimum(HudRowField fields, float fontScale) =>
+        MathF.Ceiling((fields.HasFlag(HudRowField.Name) ? 48 : 32) * DpsHudTypography.NormalizeScale(fontScale));
+
+    internal static void LimitWidths(float[] widths, float available, HudRowField fields, float fontScale = 1f)
     {
         var count = 0;
         foreach (var field in NumericFields) if (fields.HasFlag(field)) count++;
         if (count == 0) { Array.Clear(widths); return; }
-        var fixedSpace = 14 + 16 + (fields.HasFlag(HudRowField.Name) ? 48 : 20) + 6 * (count + 1);
-        var cap = Math.Max(1, (available - fixedSpace) / count);
+        var fixedSpace = 14 + 16 + NameMinimum(fields, fontScale) + 6 * (count + 1);
+        var budget = Math.Max(count, available - fixedSpace);
+        var floor = Math.Min(42 * DpsHudTypography.NormalizeScale(fontScale), budget / count);
+        var desired = new float[widths.Length];
         for (var index = 0; index < widths.Length; index++)
         {
-            widths[index] = fields.HasFlag(NumericFields[index]) ? Math.Clamp(widths[index], Math.Min(42, cap), cap) : 0;
+            desired[index] = fields.HasFlag(NumericFields[index]) ? Math.Max(floor, widths[index]) : 0;
         }
+        // 先保留可容纳的真实测量宽度，避免大字号时平均/最大列被等分上限无谓裁切。
+        var sum = 0d;
+        foreach (var width in desired) sum += width;
+        if (sum <= budget) { desired.CopyTo(widths, 0); return; }
+        var low = floor;
+        var high = budget;
+        for (var step = 0; step < 24; step++)
+        {
+            var cap = (low + high) / 2;
+            var used = 0d;
+            foreach (var width in desired) used += Math.Min(width, cap);
+            if (used <= budget) low = cap;
+            else high = cap;
+        }
+        for (var index = 0; index < widths.Length; index++) widths[index] = Math.Min(desired[index], low);
     }
 }
 

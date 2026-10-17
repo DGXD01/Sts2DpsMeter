@@ -10,6 +10,7 @@ public static class DpsMeterSettingsUi
     private static Color HeadingColor => Palette.Title;
     private static Color MutedColor => Palette.Muted;
     private static Color BodyColor => Palette.Primary;
+    private static int FontSize(HudFontRole role) => DpsHudTypography.Size(role, DpsMeterSettings.Current.FontScale);
 
     private static PanelContainer? _panel;
     private static VBoxContainer? _content;
@@ -65,10 +66,12 @@ public static class DpsMeterSettingsUi
             return;
         }
 
-        DpsHudThemeStyles.Apply(_panel!, DpsMeterSettings.Current.HudTheme);
+        DpsHudThemeStyles.Apply(_panel!, DpsMeterSettings.Current.HudTheme, DpsMeterSettings.Current.FontScale);
         _panel!.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Settings, Palette));
         _titleLabel!.AddThemeColorOverride("font_color", HeadingColor);
         _introductionLabel!.AddThemeColorOverride("font_color", MutedColor);
+        _titleLabel.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.SettingsTitle));
+        _introductionLabel.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Note));
         UpdateLocalizedHeader();
         RebuildContent();
         _panel!.Visible = _visible;
@@ -85,7 +88,7 @@ public static class DpsMeterSettingsUi
             Visible = false,
             MouseFilter = Control.MouseFilterEnum.Stop
         };
-        DpsHudThemeStyles.Apply(_panel, DpsMeterSettings.Current.HudTheme);
+        DpsHudThemeStyles.Apply(_panel, DpsMeterSettings.Current.HudTheme, DpsMeterSettings.Current.FontScale);
 
         _panel.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Settings, Palette));
         canvas.AddChild(_panel);
@@ -100,7 +103,7 @@ public static class DpsMeterSettingsUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         _titleLabel.AddThemeColorOverride("font_color", HeadingColor);
-        _titleLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.SettingsTitleSize);
+        _titleLabel.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.SettingsTitle));
         root.AddChild(_titleLabel);
 
         _introductionLabel = new Label
@@ -110,7 +113,7 @@ public static class DpsMeterSettingsUi
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         _introductionLabel.AddThemeColorOverride("font_color", MutedColor);
-        _introductionLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.SettingsNoteSize);
+        _introductionLabel.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Note));
         root.AddChild(_introductionLabel);
 
         var scroll = new ScrollContainer
@@ -311,7 +314,16 @@ public static class DpsMeterSettingsUi
         {
             settings.UiScale = DpsMeterSettings.ClampUiScale((float)value);
         });
-        AddText(DpsLocalization.Get("界面缩放仅通过上方滑块调整，不注册键盘或鼠标滚轮热键。", "UI scale is adjusted only by the slider above; no keyboard or mouse-wheel hotkeys are registered."), MutedColor);
+        AddOptionRow(DpsLocalization.Get("文字大小", "Text size"),
+            new[] { "80%", "90%", "100%", "110%", "125%", "150%" }, DpsHudTypography.ScaleIndex(settings.FontScale), index =>
+            {
+                DpsMeterSettings.Current.FontScale = DpsHudTypography.Scales[index];
+                SaveAndRefresh();
+                Callable.From(Refresh).CallDeferred();
+            });
+        AddText(DpsLocalization.Get(
+            "界面缩放控制 HUD 整体，文字大小独立控制 HUD、设置、菜单与提示的字号。放大文字时行高和宽度按需适配；标题与过长名称仍可悬停查看全文。不注册键盘或滚轮热键。预设文字档位：极简90%、默认100%、详细125%、多人110%，应用后仍可单独修改。",
+            "UI scale controls the whole HUD; text size independently adjusts text in the HUD, Settings, menus and tips. Rows and width adapt when text grows; hover clipped titles or long names for full text. No keyboard or wheel shortcuts. Preset text sizes: Minimal 90%, Default 100%, Detailed 125%, Multiplayer 110%; still editable afterward."), MutedColor);
 
         var resetScale = new Button
         {
@@ -322,8 +334,21 @@ public static class DpsMeterSettingsUi
         {
             settings.UiScale = 1f;
             SaveAndRefresh();
+            Callable.From(Refresh).CallDeferred();
         };
         _content!.AddChild(resetScale);
+        var resetText = new Button
+        {
+            FocusMode = Control.FocusModeEnum.None,
+            Text = DpsLocalization.Get("重置文字大小（100%）", "Reset Text Size (100%)")
+        };
+        resetText.Pressed += () =>
+        {
+            DpsMeterSettings.Current.FontScale = 1f;
+            SaveAndRefresh();
+            Callable.From(Refresh).CallDeferred();
+        };
+        _content.AddChild(resetText);
 
         AddSection(DpsLocalization.Get("位置", "Position"));
         AddToggle(DpsLocalization.Get("屏幕边缘磁吸", "Snap to screen edges"), settings.SnapEnabled, value =>
@@ -419,7 +444,7 @@ public static class DpsMeterSettingsUi
                 CustomMinimumSize = new Vector2(0, 34),
                 SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
             };
-            button.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+            button.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
             button.AddThemeColorOverride("font_color", BodyColor);
             button.Pressed += () =>
             {
@@ -444,7 +469,7 @@ public static class DpsMeterSettingsUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         label.AddThemeColorOverride("font_color", HeadingColor);
-        label.AddThemeFontSizeOverride("font_size", DpsHudTypography.HeaderSize);
+        label.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Header));
         _content!.AddChild(label);
     }
 
@@ -457,7 +482,7 @@ public static class DpsMeterSettingsUi
             ButtonPressed = value
         };
         toggle.AddThemeColorOverride("font_color", BodyColor);
-        toggle.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+        toggle.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
         toggle.Toggled += pressed => changed(pressed);
         _content!.AddChild(toggle);
     }
@@ -477,11 +502,11 @@ public static class DpsMeterSettingsUi
 
         option.Selected = Math.Clamp(selected, 0, options.Length - 1);
         option.AddThemeColorOverride("font_color", BodyColor);
-        option.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+        option.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
         // 弹出菜单是独立窗口，显式共享字体主题，不能只依赖面板继承。
         var popup = option.GetPopup();
         popup.Theme = _panel!.Theme;
-        popup.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+        popup.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
         option.ItemSelected += index => changed((int)index);
         row.AddChild(option);
         _content!.AddChild(row);
@@ -503,7 +528,7 @@ public static class DpsMeterSettingsUi
             HorizontalAlignment = HorizontalAlignment.Right
         };
         valueLabel.AddThemeColorOverride("font_color", BodyColor);
-        valueLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+        valueLabel.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
 
         var slider = new HSlider
         {
@@ -544,7 +569,7 @@ public static class DpsMeterSettingsUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         label.AddThemeColorOverride("font_color", BodyColor);
-        label.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+        label.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
         row.AddChild(label);
         return row;
     }
@@ -563,7 +588,7 @@ public static class DpsMeterSettingsUi
             AutowrapMode = TextServer.AutowrapMode.WordSmart
         };
         label.AddThemeColorOverride("font_color", color);
-        label.AddThemeFontSizeOverride("font_size", DpsHudTypography.SettingsNoteSize);
+        label.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Note));
         _content!.AddChild(label);
     }
 

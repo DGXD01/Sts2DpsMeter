@@ -80,6 +80,7 @@ internal static class Program
         StageSixChecks.Run();
         StageSevenChecks.Run(args.FirstOrDefault());
         StageEightChecks.Run(args.FirstOrDefault());
+        StageNineChecks.Run(args.FirstOrDefault());
         Console.WriteLine("HUD 刷新调度与布局边界检查全部通过；此结果不代表原生容器或游戏内交互已验收。");
     }
 
@@ -149,7 +150,7 @@ internal static class Program
                     Require(expected.HasFlag(DpsHudRowFields.NumericFields[index]) ? widths[index] > 0 : widths[index] == 0,
                         "隐藏字段不能占据数值列宽，可见字段应有可用宽度");
                 }
-                var fixedSpace = 14 + 16 + (expected.HasFlag(HudRowField.Name) ? 48 : 20) + 6 * (count + 1);
+                var fixedSpace = 14 + 16 + DpsHudRowFields.NameMinimum(expected, 1f) + 6 * (count + 1);
                 Require(widths.Sum() + fixedSpace <= available + 0.01f, "字段组合与超长数值不能撑出可用宽度");
                 cases++;
             }
@@ -247,7 +248,7 @@ internal static class Program
         Require(!empty.Contains("Average") && !empty.Contains("NaN"), "零命中不能出现无意义平均值");
         var legacy = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"SchemaVersion\":4,\"MaxRows\":8,\"UiScale\":1.5}")!;
         typeof(DpsMeterSettings).GetMethod("Normalize", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { legacy });
-        Require(legacy.SchemaVersion == 9 && legacy.ShowSourceIcons && legacy.TooltipDetailMode == HudTooltipDetail.Detailed &&
+        Require(legacy.SchemaVersion == 10 && legacy.ShowSourceIcons && legacy.TooltipDetailMode == HudTooltipDetail.Detailed &&
             legacy.MaxRows == 8 && legacy.UiScale == 1.5f, "旧设置升级必须保留已有值并补充新字段默认值");
         legacy.TooltipDetailMode = (HudTooltipDetail)999;
         typeof(DpsMeterSettings).GetMethod("Normalize", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, new object[] { legacy });

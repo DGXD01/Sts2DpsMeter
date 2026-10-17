@@ -169,7 +169,7 @@ internal static class StageThreeChecks
         finally { CultureInfo.CurrentCulture = previousCulture; }
         var legacy = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":4,\"maxRows\":9,\"sortMode\":999}", options)!;
         normalize.Invoke(null, new object[] { legacy });
-        Require(legacy.SchemaVersion == 9 && legacy.MaxRows == 9 && legacy.SummaryDamage &&
+        Require(legacy.SchemaVersion == 10 && legacy.MaxRows == 9 && legacy.SummaryDamage &&
             DpsHudSummary.SelectedCount(legacy) == 1 && legacy.SortMode == HudSortMode.Damage,
             "旧配置应保留已有值并补充默认摘要，无效排序回退伤害降序");
         Console.WriteLine("通过：三种范围摘要、空回合/零耗时、64 种标题组合、中英文和实际配置克隆/JSON 兼容");

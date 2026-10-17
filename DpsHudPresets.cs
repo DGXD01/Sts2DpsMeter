@@ -20,6 +20,7 @@ internal static class DpsHudPresets
         settings.CompactMode = values.CompactMode;
         settings.MaxRows = values.MaxRows;
         settings.UiScale = values.UiScale;
+        settings.FontScale = values.FontScale;
         settings.ShowSourceIcons = values.ShowSourceIcons;
         settings.TooltipDetailMode = values.TooltipDetailMode;
         settings.EnableRowDetails = values.EnableRowDetails;
@@ -55,6 +56,7 @@ internal static class DpsHudPresets
             CompactMode = true,
             MaxRows = 3,
             UiScale = 0.9f,
+            FontScale = 0.9f,
             ShowTakenBreakdown = false,
             ShowSourceIcons = false,
             ShowFieldPercentage = false,
@@ -67,6 +69,7 @@ internal static class DpsHudPresets
             HudTheme = HudTheme.HighContrast,
             MaxRows = 10,
             UiScale = 1.1f,
+            FontScale = 1.25f,
             ShowBlockGained = true,
             ShowEnergySpent = true,
             ShowEnergyGivenToAllies = true,
@@ -82,6 +85,7 @@ internal static class DpsHudPresets
         HudLayoutPreset.Multiplayer => new DpsMeterSettingsData
         {
             HudTheme = HudTheme.GameBlend,
+            FontScale = 1.1f,
             CompactMode = true,
             MaxRows = 8,
             ShowBlockGained = true,
@@ -110,17 +114,17 @@ internal static class DpsHudPresets
     internal static string Description(HudLayoutPreset preset, bool chinese) => preset switch
     {
         HudLayoutPreset.Minimal => chinese
-            ? "极简：默认深色，3 行，90% 缩放，紧凑；仅输出，名称/数值，无图标/行详情，简洁提示；标题仅伤害。"
-            : "Minimal: Default Dark, 3 rows, 90% scale, compact; dealt damage, name/value, no icons/row details, simple tips; damage title.",
+            ? "极简：默认深色，3 行，90% 界面/90% 文字，紧凑；仅输出，名称/数值，无图标/行详情，简洁提示；标题仅伤害。"
+            : "Minimal: Default Dark, 3 rows, 90% UI/90% text, compact; dealt damage, name/value, no icons/row details, simple tips; damage title.",
         HudLayoutPreset.Default => chinese
-            ? "默认：默认深色，5 行，100% 缩放；输出/承伤，名称/数值/占比，图标/行详情及详细提示；标题仅伤害。"
-            : "Default: Default Dark, 5 rows, 100% scale; dealt/taken, name/value/share, icons/row details and detailed tips; damage title.",
+            ? "默认：默认深色，5 行，100% 界面/100% 文字；输出/承伤，名称/数值/占比，图标/行详情及详细提示；标题仅伤害。"
+            : "Default: Default Dark, 5 rows, 100% UI/100% text; dealt/taken, name/value/share, icons/row details and detailed tips; damage title.",
         HudLayoutPreset.Detailed => chinese
-            ? "详细：高对比，10 行，110% 缩放；启用全部统计模块与六字段，图标/行详情及详细提示；标题伤害/DPS/DPT。队友辅助仅多人显示。"
-            : "Detailed: High Contrast, 10 rows, 110% scale; all modules and six fields, icons/row details and detailed tips; damage/DPS/DPT title. Ally support appears only in multiplayer.",
+            ? "详细：高对比，10 行，110% 界面/125% 文字；启用全部统计模块与六字段，图标/行详情及详细提示；标题伤害/DPS/DPT。队友辅助仅多人显示。"
+            : "Detailed: High Contrast, 10 rows, 110% UI/125% text; all modules and six fields, icons/row details and detailed tips; damage/DPS/DPT title. Ally support appears only in multiplayer.",
         HudLayoutPreset.Multiplayer => chinese
-            ? "多人：游戏融合，8 行，100% 缩放，紧凑；全部模块，名称/数值/占比/命中，图标/行详情及详细提示；标题伤害/DPS/DPT，新多人战斗默认全队。"
-            : "Multiplayer: Game Blend, 8 rows, 100% scale, compact; all modules, name/value/share/hits, icons/row details and detailed tips; damage/DPS/DPT title, Team default for new multiplayer combats.",
+            ? "多人：游戏融合，8 行，100% 界面/110% 文字，紧凑；全部模块，名称/数值/占比/命中，图标/行详情及详细提示；标题伤害/DPS/DPT，新多人战斗默认全队。"
+            : "Multiplayer: Game Blend, 8 rows, 100% UI/110% text, compact; all modules, name/value/share/hits, icons/row details and detailed tips; damage/DPS/DPT title, Team default for new multiplayer combats.",
         _ => string.Empty
     };
 }

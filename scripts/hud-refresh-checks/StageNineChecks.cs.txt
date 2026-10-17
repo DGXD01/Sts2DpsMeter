@@ -1,0 +1,181 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using Godot;
+using Sts2DpsMeter;
+
+internal static class StageNineChecks
+{
+    private const BindingFlags Flags = BindingFlags.Static | BindingFlags.NonPublic;
+    private static readonly JsonSerializerOptions Options = (JsonSerializerOptions)typeof(DpsMeterSettings).GetField("JsonOptions", Flags)!.GetValue(null)!;
+    private static readonly float[] UiScales = { 0.5f, 0.75f, 1f, 1.5f, 2f };
+    private static readonly Vector2[] Screens = { new(1280, 720), new(1920, 1080), new(2560, 1440), new(3840, 2160) };
+    private static string Json(object value) => JsonSerializer.Serialize(value, Options);
+    private static void Require(bool result, string message) { if (!result) throw new InvalidOperationException(message); }
+    private static void Normalize(DpsMeterSettingsData settings) => typeof(DpsMeterSettings).GetMethod("Normalize", Flags)!.Invoke(null, new object[] { settings });
+    private static DpsMeterSettingsData Clone(DpsMeterSettingsData settings) => (DpsMeterSettingsData)typeof(DpsMeterSettings).GetMethod("Clone", Flags)!.Invoke(null, new object[] { settings })!;
+
+    public static void Run(string? artifactDirectory)
+    {
+        Require(!string.IsNullOrWhiteSpace(artifactDirectory), "字号检查产物必须进入辅助目录");
+        var folder = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(artifactDirectory!))!, "字号检查");
+        Directory.CreateDirectory(folder);
+        CheckMetrics(); CheckSettings(folder); CheckLayout(); CheckViews(); ExportNativeMetrics(folder);
+    }
+
+    private static void CheckMetrics()
+    {
+        var values = DpsHudTypography.Scales;
+        Require(values.SequenceEqual(new[] { 0.8f, 0.9f, 1f, 1.1f, 1.25f, 1.5f }), "六档文字大小必须与设置选项一致");
+        var roles = Enum.GetValues<HudFontRole>();
+        var bases = new[] { 16, 14, 16, 13, 18, 14, 20, 14 };
+        foreach (var role in roles)
+        foreach (var scale in values)
+        {
+            var expected = (int)MathF.Round(bases[(int)role] * scale, MidpointRounding.AwayFromZero);
+            Require(DpsHudTypography.Size(role, scale) == expected && DpsHudTypography.ScaleIndex(scale) >= 0,
+                "各角色以基础字号乘FontScale取整，100%保持原始字号");
+            foreach (var ui in UiScales)
+                Require(DpsHudTypography.Size(role, scale) == expected, "字号计算不得混入UiScale或改写整体缩放");
+        }
+        Require(DpsHudTypography.NormalizeScale(-1) == 0.8f && DpsHudTypography.NormalizeScale(99) == 1.5f &&
+            DpsHudTypography.NormalizeScale(float.MaxValue) == 1.5f &&
+            DpsHudTypography.NormalizeScale(1.24f) == 1.25f && DpsHudTypography.NormalizeScale(float.NaN) == 1 &&
+            DpsHudTypography.NormalizeScale(float.PositiveInfinity) == 1, "非法/外部档位须有限且归一化到六档，避免无限样式缓存");
+        foreach (var height in new[] { 10f, 20, 30, 42, 65 })
+        foreach (var compact in new[] { false, true })
+            Require(DpsHudTypography.RowHeight(compact, height) >= height + DpsHudTypography.RowVerticalPadding, "原生文字高度加边距不得被固定行高压住");
+        Console.WriteLine("通过：六档×八字号角色、整数像素、独立UiScale、非法值归一化与自适应行高下界");
+    }
+
+    private static void CheckSettings(string folder)
+    {
+        foreach (var schema in new[] { 4, 5, 6, 7, 8, 9 })
+        {
+            var settings = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + schema + ",\"uiScale\":1.35,\"hudTheme\":2,\"maxRows\":9,\"positionX\":111,\"showCombatSummary\":false}", Options)!;
+            Normalize(settings);
+            Require(settings.SchemaVersion == 10 && settings.FontScale == 1 && settings.UiScale == 1.35f && settings.HudTheme == HudTheme.HighContrast &&
+                settings.MaxRows == 9 && settings.PositionX == 111 && !settings.ShowCombatSummary, "Schema4–9缺失FontScale默认100%，其余设置保留");
+        }
+        foreach (var fontScale in DpsHudTypography.Scales)
+        foreach (var uiScale in UiScales)
+        {
+            var settings = new DpsMeterSettingsData { FontScale = fontScale, UiScale = uiScale, PanelOpacity = 0.63f, PositionX = 300,
+                PositionY = 100, HudTheme = HudTheme.GameBlend, LockPosition = true, SnapAnchor = HudSnapAnchor.Right,
+                LowInterferenceMode = HudLowInterferenceMode.Fade, ShowCombatSummary = false, CombatSummaryDuration = 8 };
+            var before = Clone(settings); Normalize(settings);
+            var file = Path.Combine(folder, $"font-{fontScale}-ui-{uiScale}.json");
+            File.WriteAllText(file, Json(Clone(settings)), new UTF8Encoding(false));
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(File.ReadAllText(file), Options)!; Normalize(restored);
+            Require(Json(restored) == Json(settings) && restored.FontScale == fontScale && restored.UiScale == uiScale, "两种缩放经实际克隆/JSON/辅助文件保存恢复互不覆盖");
+            foreach (var property in typeof(DpsMeterSettingsData).GetProperties())
+                Require(Equals(property.GetValue(restored), property.GetValue(before)), "改字号不应改动合法位置/主题/行为等参数：" + property.Name);
+        }
+        var fontDefaults = new[] { 0.9f, 1f, 1.25f, 1.1f };
+        foreach (var preset in Enum.GetValues<HudLayoutPreset>())
+        foreach (var scale in DpsHudTypography.Scales)
+        {
+            var settings = new DpsMeterSettingsData { FontScale = scale };
+            DpsHudPresets.Apply(settings, preset);
+            Require(settings.FontScale == fontDefaults[(int)preset], "四套预设字体档位明确可预测");
+            settings.FontScale = scale; settings.UiScale = 1.35f;
+            Normalize(settings); var restored = Clone(settings);
+            Require(restored.FontScale == scale && restored.UiScale == 1.35f, "应用预设后手改两种缩放不应被重套");
+        }
+        Console.WriteLine("通过：Schema4–9升级、30个独立缩放文件往返、其他设置逐项保护和四预设×六档后续修改");
+    }
+
+    private static void CheckLayout()
+    {
+        var combinations = 0;
+        foreach (var screen in Screens)
+        foreach (var ui in UiScales)
+        foreach (var scale in DpsHudTypography.Scales)
+        {
+            var bounds = DpsHudLayout.Calculate(screen, new Vector2(screen.X - 5, screen.Y - 5), ui, new Vector2(340, 51), 5000, false, scale);
+            Require(bounds.Size.X * ui <= screen.X + 0.01f && bounds.Position.X + bounds.Size.X * ui <= screen.X + 0.01f &&
+                bounds.Position.Y + bounds.Size.Y * ui <= screen.Y + 0.01f && bounds.BodyHeight >= 0, "1080p/2K/4K与独立缩放后面板限高/边界仍有效");
+            var available = bounds.Size.X - 22;
+            for (var bits = 0; bits < 64; bits++)
+            {
+                var fields = bits == 0 ? HudRowField.Name : (HudRowField)bits;
+                var widths = new[] { 1000f, 1000, 1000, 1000, 1000 };
+                DpsHudRowFields.LimitWidths(widths, available, fields, scale);
+                var count = DpsHudRowFields.NumericFields.Count(field => fields.HasFlag(field));
+                if (count > 0)
+                {
+                    var used = 14 + 16 + DpsHudRowFields.NameMinimum(fields, scale) + 6 * (count + 1) + widths.Sum();
+                    Require(used <= available + 0.02f && widths.All(v => float.IsFinite(v) && v >= 0), "六字段放大后列宽预算不能撑出内容区域");
+                }
+                combinations++;
+            }
+            var collapsed = DpsHudLayout.Calculate(screen, Vector2.Zero, ui, new Vector2(340, 51), 5000, true, scale);
+            Require(collapsed.BodyHeight == 0, "文字放大不得意外展开手动折叠");
+        }
+        Require(DpsHudTypography.ContentWidth(420, 1.5f) == 630, "浮层宽度随大字适配，UiScale仍独立作用于整个控件");
+        var measured = new[] { 60f, 20, 20, 20, 65 };
+        DpsHudRowFields.LimitWidths(measured, 428, (HudRowField)63, 1.25f);
+        Require(measured[4] == 65 && measured[0] == 60, "其他列有余量时，125%文字的平均/数值列不应被统一等分上限裁掉");
+        Console.WriteLine("通过：" + combinations + "个视口/两种缩放/64字段布局预算，折叠、限高和2K/4K边界");
+    }
+
+    private static void CheckViews()
+    {
+        var selected = typeof(DpsMeterUi).GetField("_selectedPlayerIndex", Flags)!;
+        var scope = typeof(DpsMeterUi).GetField("_scopeIndex", Flags)!;
+        var waiting = typeof(DpsMeterUi).GetField("_selfAwaitingLocal", Flags)!;
+        var build = typeof(DpsMeterUi).GetMethod("BuildDamageView", Flags)!;
+        var oldSelected = selected.GetValue(null); var oldScope = scope.GetValue(null); var oldWaiting = waiting.GetValue(null);
+        var p = StageThreeChecks.Player();
+        var snapshot = new CombatStatsSnapshot(true, 10, 2, new[] { p, p with { PlayerNetId = 2, IsLocalPlayer = false } }, 4, 709);
+        var frozen = Json(snapshot);
+        try
+        {
+            selected.SetValue(null, 0); waiting.SetValue(null, false);
+            foreach (var s in new[] { 0, 1, 2 })
+            foreach (var theme in Enum.GetValues<HudTheme>())
+            foreach (var compact in new[] { false, true })
+            {
+                scope.SetValue(null, s);
+                var settings = new DpsMeterSettingsData { HudTheme = theme, CompactMode = compact, UiScale = 0.75f, SortMode = HudSortMode.Recent };
+                var expected = Json(build.Invoke(null, new object[] { settings, snapshot })!);
+                foreach (var scale in DpsHudTypography.Scales)
+                {
+                    settings.FontScale = scale;
+                    Require(Json(build.Invoke(null, new object[] { settings, snapshot })!) == expected && Json(snapshot) == frozen && settings.UiScale == 0.75f,
+                        "六字号不得改变真实伤害/来源/范围/排序/统计快照或UiScale");
+                }
+            }
+        }
+        finally { selected.SetValue(null, oldSelected); scope.SetValue(null, oldScope); waiting.SetValue(null, oldWaiting); }
+        Console.WriteLine("通过：108个真实视图字号组合保留三主题/两密度/范围/统计与UiScale");
+    }
+
+    private static void ExportNativeMetrics(string folder)
+    {
+        var list = new List<object>();
+        foreach (var scale in DpsHudTypography.Scales)
+        {
+            var layouts = new List<object>();
+            foreach (var screen in Screens)
+            foreach (var ui in new[] { 0.5f, 1f, 2f })
+            {
+                var width = DpsHudLayout.Calculate(screen, Vector2.Zero, ui, new Vector2(340, 51), 100, false, scale).Size.X;
+                var two = new[] { 10000f, 10000, 10000, 10000, 10000 };
+                var five = (float[])two.Clone();
+                DpsHudRowFields.LimitWidths(two, width - 22, HudRowField.Name | HudRowField.Damage | HudRowField.Percentage, scale);
+                DpsHudRowFields.LimitWidths(five, width - 22, (HudRowField)63, scale);
+                layouts.Add(new { screen = new[] { screen.X, screen.Y }, ui, width, two, five });
+            }
+            list.Add(new { fontScale = scale, sizes = Enum.GetValues<HudFontRole>().ToDictionary(r => r.ToString(), r => DpsHudTypography.Size(r, scale)),
+                nameMinimum = DpsHudRowFields.NameMinimum(HudRowField.Name, scale), rowPadding = DpsHudTypography.RowVerticalPadding,
+                outline = DpsHudTypography.OutlineSize, layouts,
+                summaryWidth = DpsHudTypography.ContentWidth(420, scale), tooltipWidth = DpsHudTypography.ContentWidth(400, scale) });
+        }
+        File.WriteAllText(Path.Combine(folder, "实际字号与布局.json"), Json(list), new UTF8Encoding(false));
+    }
+}

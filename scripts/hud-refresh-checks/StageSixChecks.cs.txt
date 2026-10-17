@@ -147,7 +147,7 @@ internal static class StageSixChecks
         {
             var settings = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + schema + ",\"maxRows\":9,\"summaryDps\":true,\"multiplayerDefaultView\":2}", options)!;
             normalize.Invoke(null, new object[] { settings });
-            Require(settings.SchemaVersion == 9 && settings.ShowCombatSummary && settings.CombatSummaryDuration == 5 && settings.MaxRows == 9 &&
+            Require(settings.SchemaVersion == 10 && settings.ShowCombatSummary && settings.CombatSummaryDuration == 5 && settings.MaxRows == 9 &&
                 settings.SummaryDps && settings.MultiplayerDefaultView == HudPlayerView.Team, "旧配置保留已有值，总结接入默认 5 秒");
         }
         foreach (var duration in new[] { 3f, 5, 8, 15, -1, 999, float.NaN, float.PositiveInfinity })

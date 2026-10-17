@@ -110,7 +110,7 @@ internal static class StageEightChecks
         {
             var old = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + version + ",\"maxRows\":9,\"uiScale\":1.4,\"positionX\":123,\"panelOpacity\":0.63,\"showCombatSummary\":false}", Options)!;
             Normalize(old);
-            Require(old.SchemaVersion == 9 && old.HudTheme == HudTheme.DefaultDark && old.MaxRows == 9 && old.UiScale == 1.4f &&
+            Require(old.SchemaVersion == 10 && old.HudTheme == HudTheme.DefaultDark && old.MaxRows == 9 && old.UiScale == 1.4f &&
                 old.PositionX == 123 && old.PanelOpacity == 0.63f && !old.ShowCombatSummary, "Schema4–8升级保留旧值，缺失主题补默认深色");
         }
         foreach (var id in new[] { HudTheme.DefaultDark, HudTheme.GameBlend, HudTheme.HighContrast, (HudTheme)999, (HudTheme)(-1) })

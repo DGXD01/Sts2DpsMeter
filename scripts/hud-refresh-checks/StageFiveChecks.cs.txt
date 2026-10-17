@@ -122,7 +122,7 @@ internal static class StageFiveChecks
         {
             var old = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + schema + ",\"maxRows\":9,\"panelOpacity\":0.81,\"summaryDps\":true,\"snapEnabled\":false}", options)!;
             normalize.Invoke(null, new object[] { old });
-            Require(old.SchemaVersion == 9 && old.MultiplayerDefaultView == HudPlayerView.CurrentPlayer && old.MaxRows == 9 && old.PanelOpacity == 0.81f &&
+            Require(old.SchemaVersion == 10 && old.MultiplayerDefaultView == HudPlayerView.CurrentPlayer && old.MaxRows == 9 && old.PanelOpacity == 0.81f &&
                 old.SummaryDps && !old.SnapEnabled, "旧配置升级不得丢失原值，默认当前玩家");
         }
         foreach (var mode in Enum.GetValues<HudPlayerView>().Append((HudPlayerView)999))

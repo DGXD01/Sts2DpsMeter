@@ -21,7 +21,7 @@ public static partial class DpsMeterUi
             ZIndex = 10,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        DpsHudThemeStyles.Apply(_combatSummaryPanel, DpsMeterSettings.Current.HudTheme);
+        DpsHudThemeStyles.Apply(_combatSummaryPanel, DpsMeterSettings.Current.HudTheme, DpsMeterSettings.Current.FontScale);
         _combatSummaryPanel.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Summary, Palette));
         canvas.AddChild(_combatSummaryPanel);
         var layout = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -39,7 +39,7 @@ public static partial class DpsMeterUi
                 MouseFilter = Control.MouseFilterEnum.Ignore
             };
             label.AddThemeColorOverride("font_color", index == 0 ? TitleColor : PrimaryText);
-            label.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+            label.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
             layout.AddChild(label);
             CombatSummaryLabels[index] = label;
         }
@@ -68,7 +68,7 @@ public static partial class DpsMeterUi
         // 独立于 HUD 的折叠和临时淡化。全层级忽略鼠标，不抢焦点或拦截奖励操作。
         var scale = _panel!.Scale.X;
         var bounds = _panel.GetCanvasTransform().AffineInverse() * _panel.GetViewport().GetVisibleRect();
-        var width = Mathf.Min(420, Mathf.Max(1, (bounds.Size.X - 16) / scale));
+        var width = Mathf.Min(DpsHudTypography.ContentWidth(420, settings.FontScale), Mathf.Max(1, (bounds.Size.X - 16) / scale));
         _combatSummaryPanel!.Scale = Vector2.One * scale;
         _combatSummaryPanel.CustomMinimumSize = new Vector2(width, 0);
         _combatSummaryPanel.Size = new Vector2(width, 0);

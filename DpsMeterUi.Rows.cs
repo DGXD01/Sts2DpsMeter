@@ -49,7 +49,7 @@ public static partial class DpsMeterUi
         foreach (var row in ActiveRows) row.IncludeColumnWidths(ColumnWidths);
         var available = (_contentScroll!.Size.X > 0 ? _contentScroll.Size.X : MinimumPanelWidth - 16)
             - _contentScroll.GetVScrollBar().GetCombinedMinimumSize().X;
-        DpsHudRowFields.LimitWidths(ColumnWidths, available, fields);
+        DpsHudRowFields.LimitWidths(ColumnWidths, available, fields, settings.FontScale);
         foreach (var row in ActiveRows) changed |= row.SetColumnWidths(ColumnWidths);
         return changed;
     }
@@ -78,6 +78,7 @@ public static partial class DpsMeterUi
         };
         private readonly List<DamageRowControls> _rows = new();
         private HudTheme? _theme;
+        private float? _fontScale;
 
         public DamageSectionControls()
         {
@@ -85,7 +86,7 @@ public static partial class DpsMeterUi
             _heading.AddThemeColorOverride("font_color", TitleColor);
             _heading.AddThemeColorOverride("font_outline_color", Palette.Outline);
             _heading.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
-            _heading.AddThemeFontSizeOverride("font_size", 14);
+            _heading.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.ModuleHeading));
             Container.AddChild(_heading);
         }
 
@@ -98,7 +99,14 @@ public static partial class DpsMeterUi
                 _theme = DpsHudThemes.Normalize(settings.HudTheme);
                 _heading.AddThemeColorOverride("font_color", DpsHudThemes.Get(_theme.Value).Title);
             }
-            var changed = SetVisible(Container, true);
+            var fontScale = DpsHudTypography.NormalizeScale(settings.FontScale);
+            var fontChanged = _fontScale != fontScale;
+            if (fontChanged)
+            {
+                _fontScale = fontScale;
+                _heading.AddThemeFontSizeOverride("font_size", DpsHudTypography.Size(HudFontRole.ModuleHeading, fontScale));
+            }
+            var changed = SetVisible(Container, true) || fontChanged;
             changed |= SetVisible(_heading, !string.IsNullOrWhiteSpace(heading));
             if (_heading.Text != (heading ?? string.Empty))
             {
@@ -148,6 +156,7 @@ public static partial class DpsMeterUi
         private (bool Icons, HudTooltipDetail Tooltip, HudRowField Fields, bool Details, bool Expanded, int Rank)? _lastPresentation;
         private bool _measurementsDirty = true;
         private HudTheme? _theme;
+        private float? _fontScale;
         private bool _canExpand;
         private bool _pressed;
 
@@ -231,7 +240,7 @@ public static partial class DpsMeterUi
                 Visible = false
             };
             _details.AddThemeColorOverride("font_color", MutedText);
-            _details.AddThemeFontSizeOverride("font_size", DpsHudTypography.DetailSize);
+            _details.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Detail));
             Root.AddChild(_details);
         }
 
@@ -241,21 +250,26 @@ public static partial class DpsMeterUi
             var theme = DpsHudThemes.Normalize(settings.HudTheme);
             var themeChanged = _theme != theme;
             if (themeChanged) ApplyTheme(theme);
+            var fontScale = DpsHudTypography.NormalizeScale(settings.FontScale);
+            var fontChanged = _fontScale != fontScale;
             var compact = settings.CompactMode;
             var expanded = settings.EnableRowDetails && RowSelection.SelectedKey == key && data.Info is not null;
             var presentation = (settings.ShowSourceIcons, settings.TooltipDetailMode, fields,
                 settings.EnableRowDetails, expanded, rank);
             var changed = SetVisible(Root, true);
             if (Key == key && _lastData == data && _lastPercentage == percentage && _compact == compact &&
-                _lastLanguage == language && _lastPresentation == presentation && !themeChanged) return changed;
+                _lastLanguage == language && _lastPresentation == presentation && !themeChanged && !fontChanged) return changed;
             if (Key != key) _pressed = false;
             Key = key;
             _canExpand = settings.EnableRowDetails && data.Info is not null;
             if (!_canExpand) _pressed = false;
-            if (_lastData is null || _compact != compact)
+            if (_lastData is null || _compact != compact || fontChanged)
             {
-                var fontSize = compact ? DpsHudTypography.CompactBodySize : DpsHudTypography.BodySize;
-                _row.CustomMinimumSize = new Vector2(0, compact ? 26 : 30);
+                _fontScale = fontScale;
+                var fontSize = DpsHudTypography.Size(compact ? HudFontRole.CompactBody : HudFontRole.Body, fontScale);
+                var textHeight = _name.GetThemeFont("font").GetHeight(fontSize);
+                _row.CustomMinimumSize = new Vector2(0, DpsHudTypography.RowHeight(compact, textHeight));
+                _details.AddThemeFontSizeOverride("font_size", DpsHudTypography.Size(HudFontRole.Detail, fontScale));
                 _name.AddThemeFontSizeOverride("font_size", fontSize);
                 _richName.AddThemeFontSizeOverride("normal_font_size", fontSize);
                 _richName.AddThemeFontSizeOverride("bold_font_size", fontSize);
@@ -264,7 +278,7 @@ public static partial class DpsMeterUi
                 changed = true;
             }
             var showName = fields.HasFlag(HudRowField.Name);
-            _nameColumn.CustomMinimumSize = new Vector2(showName ? 48 : 20, 0);
+            _nameColumn.CustomMinimumSize = new Vector2(DpsHudRowFields.NameMinimum(fields, fontScale), 0);
             _name.Text = showName ? data.Label : $"#{rank}";
             _richName.Text = showName && data.Details is not null ? BuildRichRowText(data, theme) : string.Empty;
             _name.Visible = !showName || data.Details is null;

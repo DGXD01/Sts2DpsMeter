@@ -21,7 +21,8 @@ public static partial class DpsMeterUi
     private static Color PanelBorder => Palette.Border;
     private static Color BarBackground => Palette.BarTrack;
     private static Color BarFill => Palette.BarFill;
-    private static HudTheme? _appliedTheme;
+    private static (HudTheme Theme, float FontScale)? _appliedAppearance;
+    private static int FontSize(HudFontRole role) => DpsHudTypography.Size(role, DpsMeterSettings.Current.FontScale);
 
     private static CanvasLayer? _canvas;
     private static PanelContainer? _panel;
@@ -174,7 +175,7 @@ public static partial class DpsMeterUi
 
         _panel.Scale = new Vector2(settings.UiScale, settings.UiScale);
         _panel.PivotOffset = Vector2.Zero;
-        ApplyHudTheme(settings.HudTheme);
+        ApplyHudAppearance(settings.HudTheme, settings.FontScale);
         ApplyPanelStyle(settings);
         var scopeChanged = NormalizeScopeSelection(snapshot.Players.Count);
         _contentDivider!.Visible = !collapsed;
@@ -194,7 +195,7 @@ public static partial class DpsMeterUi
         var contentChanged = !collapsed && UpdateDamageSections(settings, view, language);
         var layoutState = new PanelLayoutState(
             language, settings.CompactMode,
-            settings.UiScale, settings.PositionX, settings.PositionY,
+            settings.UiScale, settings.FontScale, settings.PositionX, settings.PositionY,
             collapsed, GetViewportSize(), settings.SnapEnabled, settings.ScreenMargin, settings.SnapAnchor);
         if (contentChanged || navigationChanged || scopeChanged || playerViewChanged || layoutState != _lastLayoutState)
         {
@@ -865,10 +866,12 @@ public static partial class DpsMeterUi
         // ScrollContainer 隔离明细的最小高度，避免容器把已限高的面板重新撑出屏幕。
         var bounds = DpsHudLayout.Calculate(
             GetViewportSize(), _panel!.Position, settings.UiScale, chromeMinimum,
-            _moduleGrid!.GetCombinedMinimumSize().Y, collapsed);
+            _moduleGrid!.GetCombinedMinimumSize().Y, collapsed, settings.FontScale);
         _contentScroll!.CustomMinimumSize = new Vector2(0, bounds.BodyHeight);
         _panel.CustomMinimumSize = new Vector2(bounds.Size.X, 0);
+        var widthChanged = MathF.Abs(_panel.Size.X - bounds.Size.X) > 0.5f;
         _panel.Size = bounds.Size;
+        if (widthChanged) RequestImmediateRefresh(); // 下一帧按新宽度重新分配数字列。
         _panel.Position = DpsHudPlacement.Restore(bounds.Position, bounds.Size * settings.UiScale, GetViewportSize(),
             !_dragging && settings.SnapEnabled ? settings.ScreenMargin : 0,
             !_dragging && settings.SnapEnabled ? settings.SnapAnchor : HudSnapAnchor.None);
@@ -931,8 +934,8 @@ public static partial class DpsMeterUi
             CustomMinimumSize = new Vector2(MinimumPanelWidth, 0f),
             MouseFilter = Control.MouseFilterEnum.Stop
         };
-        _appliedTheme = null;
-        DpsHudThemeStyles.Apply(_panel, DpsMeterSettings.Current.HudTheme);
+        _appliedAppearance = null;
+        DpsHudThemeStyles.Apply(_panel, DpsMeterSettings.Current.HudTheme, DpsMeterSettings.Current.FontScale);
 
         _panelStyle = DpsHudThemeStyles.Panel(HudPanelKind.Main, Palette);
         _panel.AddThemeStyleboxOverride("panel", _panelStyle);
@@ -976,7 +979,7 @@ public static partial class DpsMeterUi
         _header.AddThemeColorOverride("font_color", TitleColor);
         _header.AddThemeColorOverride("font_outline_color", Palette.Outline);
         _header.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
-        _header.AddThemeFontSizeOverride("font_size", DpsHudTypography.HeaderSize);
+        _header.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Header));
         headerRow.AddChild(_header);
 
         _nextPlayerButton = CreateArrowButton("▶", OnNextPlayerPressed);
@@ -994,7 +997,7 @@ public static partial class DpsMeterUi
         _scopeOption.Selected = ScopeCombat;
         _scopeOption.ItemSelected += OnScopeSelected;
         _scopeOption.AddThemeColorOverride("font_color", PrimaryText);
-        _scopeOption.AddThemeFontSizeOverride("font_size", DpsHudTypography.CompactBodySize);
+        _scopeOption.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.CompactBody));
         _scopeOption.GetPopup().Theme = _panel.Theme;
         ApplyDropdownStyle(_scopeOption);
         headerRow.AddChild(_scopeOption);
@@ -1057,33 +1060,40 @@ public static partial class DpsMeterUi
             MouseFilter = Control.MouseFilterEnum.Stop
         };
         DpsHudThemeStyles.Arrow(button, Palette);
-        button.AddThemeFontSizeOverride("font_size", 20);
+        button.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Navigation));
         button.Pressed += pressed;
         return button;
     }
 
     private static void ApplyDropdownStyle(OptionButton option)
     {
-        DpsHudThemeStyles.Apply(option, DpsMeterSettings.Current.HudTheme);
+        DpsHudThemeStyles.Apply(option, DpsMeterSettings.Current.HudTheme, DpsMeterSettings.Current.FontScale);
         option.GetPopup().Theme = option.Theme;
     }
 
-    private static void ApplyHudTheme(HudTheme theme)
+    private static void ApplyHudAppearance(HudTheme theme, float fontScale)
     {
         theme = DpsHudThemes.Normalize(theme);
-        if (_appliedTheme == theme) return;
-        _appliedTheme = theme;
+        fontScale = DpsHudTypography.NormalizeScale(fontScale);
+        if (_appliedAppearance == (theme, fontScale)) return;
+        _appliedAppearance = (theme, fontScale);
         var palette = DpsHudThemes.Get(theme);
-        DpsHudThemeStyles.Apply(_panel!, theme);
+        DpsHudThemeStyles.Apply(_panel!, theme, fontScale);
         _header!.AddThemeColorOverride("font_color", palette.Title);
         _header.AddThemeColorOverride("font_outline_color", palette.Outline);
+        _header.AddThemeFontSizeOverride("font_size", DpsHudTypography.Size(HudFontRole.Header, fontScale));
         foreach (var button in new[] { _previousPlayerButton, _nextPlayerButton, _settingsButton, _collapseButton })
-            if (IsAlive(button)) DpsHudThemeStyles.Arrow(button!, palette);
+        {
+            if (!IsAlive(button)) continue;
+            DpsHudThemeStyles.Arrow(button!, palette);
+            button!.AddThemeFontSizeOverride("font_size", DpsHudTypography.Size(HudFontRole.Navigation, fontScale));
+        }
         foreach (var option in new[] { _scopeOption, _playerViewOption })
         {
             if (!IsAlive(option)) continue;
             ApplyDropdownStyle(option!);
             option!.AddThemeColorOverride("font_color", palette.Primary);
+            option.AddThemeFontSizeOverride("font_size", DpsHudTypography.Size(HudFontRole.CompactBody, fontScale));
         }
         if (_contentDivider is ColorRect divider) divider.Color = palette.Divider;
         foreach (var (panel, kind) in new[]
@@ -1092,12 +1102,20 @@ public static partial class DpsMeterUi
         })
         {
             if (!IsAlive(panel)) continue;
-            DpsHudThemeStyles.Apply(panel!, theme);
+            DpsHudThemeStyles.Apply(panel!, theme, fontScale);
             panel!.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(kind, palette));
         }
-        if (IsAlive(_headerTooltipLabel)) _headerTooltipLabel!.AddThemeColorOverride("font_color", palette.Primary);
+        if (IsAlive(_headerTooltipLabel))
+        {
+            _headerTooltipLabel!.AddThemeColorOverride("font_color", palette.Primary);
+            _headerTooltipLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.Size(HudFontRole.Body, fontScale));
+        }
         for (var index = 0; index < CombatSummaryLabels.Length; index++)
-            if (IsAlive(CombatSummaryLabels[index])) CombatSummaryLabels[index].AddThemeColorOverride("font_color", index == 0 ? palette.Title : palette.Primary);
+        {
+            if (!IsAlive(CombatSummaryLabels[index])) continue;
+            CombatSummaryLabels[index].AddThemeColorOverride("font_color", index == 0 ? palette.Title : palette.Primary);
+            CombatSummaryLabels[index].AddThemeFontSizeOverride("font_size", DpsHudTypography.Size(HudFontRole.Body, fontScale));
+        }
         if (IsAlive(_snapPreview)) _snapPreview!.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Snap, palette));
     }
 
@@ -1130,6 +1148,7 @@ public static partial class DpsMeterUi
         string Language,
         bool CompactMode,
         float UiScale,
+        float FontScale,
         float PositionX,
         float PositionY,
         bool Collapsed,

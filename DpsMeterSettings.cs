@@ -15,7 +15,8 @@ public enum HudTooltipDetail
 
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 9;
+    public int SchemaVersion { get; set; } = 10;
+    public float FontScale { get; set; } = 1f;
     public HudTheme HudTheme { get; set; } = HudTheme.DefaultDark;
     public bool ShowCombatSummary { get; set; } = true;
     public float CombatSummaryDuration { get; set; } = DpsCombatSummary.DefaultDuration;
@@ -67,7 +68,7 @@ public static class DpsMeterSettings
     public const float MaxUiScale = 2.0f;
     public const float UiScaleStep = 0.05f;
 
-    private const int CurrentSchemaVersion = 9;
+    private const int CurrentSchemaVersion = 10;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -183,6 +184,7 @@ public static class DpsMeterSettings
         return new DpsMeterSettingsData
         {
             SchemaVersion = source.SchemaVersion,
+            FontScale = source.FontScale,
             HudTheme = source.HudTheme,
             ShowCombatSummary = source.ShowCombatSummary,
             CombatSummaryDuration = source.CombatSummaryDuration,
@@ -232,6 +234,7 @@ public static class DpsMeterSettings
     private static void Normalize(DpsMeterSettingsData settings)
     {
         settings.SchemaVersion = CurrentSchemaVersion;
+        settings.FontScale = DpsHudTypography.NormalizeScale(settings.FontScale);
         settings.HudTheme = DpsHudThemes.Normalize(settings.HudTheme);
         settings.CombatSummaryDuration = DpsCombatSummary.NormalizeDuration(settings.CombatSummaryDuration);
         settings.MultiplayerDefaultView = HudPlayerSelection.Normalize(settings.MultiplayerDefaultView);

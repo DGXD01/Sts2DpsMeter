@@ -15,10 +15,11 @@ internal static class DpsHudLayout
         float uiScale,
         Vector2 chromeMinimum,
         float contentHeight,
-        bool collapsed)
+        bool collapsed,
+        float fontScale = 1f)
     {
         var logicalViewport = viewport / uiScale;
-        var width = Math.Min(logicalViewport.X, Math.Max(PreferredWidth, chromeMinimum.X));
+        var width = Math.Min(logicalViewport.X, Math.Max(DpsHudTypography.ContentWidth(PreferredWidth, fontScale), chromeMinimum.X));
         var heightLimit = Math.Max(chromeMinimum.Y, (viewport.Y - ScreenPadding) / uiScale);
         var bodyHeight = collapsed ? 0f : Math.Clamp(contentHeight, 0f, heightLimit - chromeMinimum.Y);
         var size = new Vector2(width, chromeMinimum.Y + bodyHeight);

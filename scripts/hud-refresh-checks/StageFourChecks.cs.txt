@@ -187,7 +187,7 @@ internal static class StageFourChecks
         {
             var old = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + schema + ",\"panelOpacity\":0.63,\"uiScale\":1.3,\"maxRows\":7,\"positionX\":400,\"summaryDps\":true}", options)!;
             normalize.Invoke(null, new object[] { old });
-            Require(old.SchemaVersion == 9 && old.PanelOpacity == 0.63f && old.UiScale == 1.3f && old.MaxRows == 7 && old.PositionX == 400 &&
+            Require(old.SchemaVersion == 10 && old.PanelOpacity == 0.63f && old.UiScale == 1.3f && old.MaxRows == 7 && old.PositionX == 400 &&
                 old.SummaryDps && old.SnapEnabled && old.SnapDistance == 24 && old.ScreenMargin == 12 && old.SnapAnchor == HudSnapAnchor.None &&
                 old.LowInterferenceMode == HudLowInterferenceMode.Off, "旧配置升级须保留原值，新低干扰默认关闭");
         }

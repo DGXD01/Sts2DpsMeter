@@ -35,7 +35,7 @@ public static partial class DpsMeterUi
             MouseFilter = Control.MouseFilterEnum.Stop
         };
         for (var index = 0; index < 3; index++) _playerViewOption.AddItem(string.Empty, index);
-        _playerViewOption.AddThemeFontSizeOverride("font_size", DpsHudTypography.CompactBodySize);
+        _playerViewOption.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.CompactBody));
         _playerViewOption.AddThemeColorOverride("font_color", PrimaryText);
         _playerViewOption.GetPopup().Theme = _panel!.Theme;
         ApplyDropdownStyle(_playerViewOption);

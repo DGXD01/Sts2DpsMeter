@@ -19,7 +19,7 @@ public static partial class DpsMeterUi
             ZIndex = 100,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        DpsHudThemeStyles.Apply(_headerTooltipPanel, DpsMeterSettings.Current.HudTheme);
+        DpsHudThemeStyles.Apply(_headerTooltipPanel, DpsMeterSettings.Current.HudTheme, DpsMeterSettings.Current.FontScale);
         _headerTooltipPanel.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Tooltip, Palette));
         canvas.AddChild(_headerTooltipPanel);
         _headerTooltipLabel = new Label
@@ -28,7 +28,7 @@ public static partial class DpsMeterUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         _headerTooltipLabel.AddThemeColorOverride("font_color", PrimaryText);
-        _headerTooltipLabel.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+        _headerTooltipLabel.AddThemeFontSizeOverride("font_size", FontSize(HudFontRole.Body));
         _headerTooltipPanel.AddChild(_headerTooltipLabel);
     }
 
@@ -63,7 +63,7 @@ public static partial class DpsMeterUi
         }
         var scale = _panel.Scale.X;
         var bounds = _panel.GetCanvasTransform().AffineInverse() * _panel.GetViewport().GetVisibleRect();
-        var width = Mathf.Min(400, Mathf.Max(1, (bounds.Size.X - 16) / scale));
+        var width = Mathf.Min(DpsHudTypography.ContentWidth(400, DpsMeterSettings.Current.FontScale), Mathf.Max(1, (bounds.Size.X - 16) / scale));
         _headerTooltipPanel!.Scale = Vector2.One * scale;
         _headerTooltipLabel!.Size = new Vector2(Mathf.Max(1, width - 24), 0);
         _headerTooltipPanel.Size = new Vector2(width, 0);

@@ -5,18 +5,19 @@ namespace Sts2DpsMeter;
 
 internal enum HudPanelKind { Main, Settings, Tooltip, Summary, Snap }
 
-// Mod 独享、按主题缓存；不修改游戏主题或字体实例。所有主题使用相同边距和控件尺寸。
+// Mod 独享、按主题/六档字号缓存；不修改游戏主题或字体实例。所有主题使用相同边距和控件尺寸。
 internal static class DpsHudThemeStyles
 {
-    private static readonly Dictionary<HudTheme, Theme> Cache = new();
+    private static readonly Dictionary<(HudTheme, float), Theme> Cache = new();
 
-    internal static void Apply(Control control, HudTheme id)
+    internal static void Apply(Control control, HudTheme id, float fontScale)
     {
         id = DpsHudThemes.Normalize(id);
-        if (!Cache.TryGetValue(id, out var theme) || !GodotObject.IsInstanceValid(theme))
+        var key = (id, DpsHudTypography.NormalizeScale(fontScale));
+        if (!Cache.TryGetValue(key, out var theme) || !GodotObject.IsInstanceValid(theme))
         {
-            theme = Build(DpsHudThemes.Get(id));
-            Cache[id] = theme;
+            theme = Build(DpsHudThemes.Get(id), key.Item2);
+            Cache[key] = theme;
         }
         control.Theme = theme;
     }
@@ -69,9 +70,9 @@ internal static class DpsHudThemeStyles
         button.AddThemeStyleboxOverride("focus", Flat(Colors.Transparent, p.Border));
     }
 
-    private static Theme Build(ThemeDefinition p)
+    private static Theme Build(ThemeDefinition p, float fontScale)
     {
-        var theme = DpsHudTypography.CopyTheme();
+        var theme = DpsHudTypography.CopyTheme(fontScale);
         foreach (var type in new[] { "Label", "Button", "OptionButton", "CheckBox", "PopupMenu", "TooltipLabel" })
         {
             theme.SetColor("font_color", type, p.Primary);
