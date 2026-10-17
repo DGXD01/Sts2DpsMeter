@@ -16,7 +16,13 @@ internal static class DpsHudTypography
     private static Theme? _theme;
     private static bool _initialized;
 
-    internal static void Apply(Control panel)
+    internal static Theme CopyTheme()
+    {
+        EnsureInitialized();
+        return _theme?.Duplicate() as Theme ?? new Theme { DefaultFontSize = BodySize };
+    }
+
+    private static void EnsureInitialized()
     {
         if (!_initialized)
         {
@@ -45,7 +51,6 @@ internal static class DpsHudTypography
                 GD.PushWarning($"[{ModEntry.ModId}] 界面字体初始化失败，使用默认字体：{exception.Message}");
             }
         }
-        if (_theme is not null && GodotObject.IsInstanceValid(_theme)) panel.Theme = _theme;
     }
 
     private static SystemFont CreateFont(int weight) => new()

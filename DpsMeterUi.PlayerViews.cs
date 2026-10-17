@@ -84,7 +84,7 @@ public static partial class DpsMeterUi
         {
             var player = snapshot.Players[PlayerSelection.Index];
             var name = string.IsNullOrWhiteSpace(player.DisplayName) ? L("未知玩家", "Unknown player") : player.DisplayName;
-            identity = BuildRichRowText(new DamageRowData(name, 0, NameColorHex: player.NameColorHex, IsLocalPlayer: player.IsLocalPlayer));
+            identity = BuildRichRowText(new DamageRowData(name, 0, NameColorHex: player.NameColorHex, IsLocalPlayer: player.IsLocalPlayer), DpsMeterSettings.Current.HudTheme);
         }
         if (_playerIdentity!.Text != identity)
         {

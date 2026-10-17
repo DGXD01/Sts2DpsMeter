@@ -1,0 +1,183 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using Godot;
+using Sts2DpsMeter;
+
+internal static class StageEightChecks
+{
+    private const BindingFlags Flags = BindingFlags.Static | BindingFlags.NonPublic;
+    private static readonly JsonSerializerOptions Options = (JsonSerializerOptions)typeof(DpsMeterSettings).GetField("JsonOptions", Flags)!.GetValue(null)!;
+    private static void Require(bool result, string description)
+    {
+        if (!result) throw new InvalidOperationException(description);
+    }
+    private static string Json(object value) => JsonSerializer.Serialize(value, Options);
+    private static void Normalize(DpsMeterSettingsData settings) => typeof(DpsMeterSettings).GetMethod("Normalize", Flags)!.Invoke(null, new object[] { settings });
+    private static DpsMeterSettingsData Clone(DpsMeterSettingsData settings) => (DpsMeterSettingsData)typeof(DpsMeterSettings).GetMethod("Clone", Flags)!.Invoke(null, new object[] { settings })!;
+    private static DpsMeterSettingsData Seed() => new()
+    {
+        PositionX = 425, PositionY = 108, LockPosition = true, StartVisible = false, UiScale = 1.35f,
+        SnapDistance = 42, ScreenMargin = 24, SnapAnchor = HudSnapAnchor.Bottom | HudSnapAnchor.Right,
+        PanelOpacity = 0.61f, LowInterferenceMode = HudLowInterferenceMode.Fade, LowInterferenceOpacity = 0.35f,
+        ShowCombatSummary = false, CombatSummaryDuration = 8, SortMode = HudSortMode.Recent,
+        MultiplayerDefaultView = HudPlayerView.Self, MaxRows = 7, ShowFieldHits = true
+    };
+
+    public static void Run(string? artifactDirectory)
+    {
+        Require(!string.IsNullOrWhiteSpace(artifactDirectory), "主题测试只能写入辅助目录");
+        var folder = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(artifactDirectory!))!, "主题检查");
+        Directory.CreateDirectory(folder);
+        CheckPalette(folder);
+        CheckSettings(folder);
+        CheckPresets();
+        CheckViewsAndIdentity();
+    }
+
+    private static double Light(Color color)
+    {
+        static double Channel(float v) => v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+        return 0.2126 * Channel(color.R) + 0.7152 * Channel(color.G) + 0.0722 * Channel(color.B);
+    }
+    private static double Ratio(Color a, Color b)
+    {
+        var x = Light(a); var y = Light(b);
+        return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05);
+    }
+    private static Color Over(Color foreground, Color background) => new(
+        foreground.R * foreground.A + background.R * (1 - foreground.A),
+        foreground.G * foreground.A + background.G * (1 - foreground.A),
+        foreground.B * foreground.A + background.B * (1 - foreground.A));
+
+    private static void CheckPalette(string folder)
+    {
+        var records = new List<object>();
+        var all = Enum.GetValues<HudTheme>();
+        Require(all.Length == 3, "至少且明确提供本阶段三套主题");
+        Require(DpsHudThemes.Normalize((HudTheme)999) == HudTheme.DefaultDark &&
+            ReferenceEquals(DpsHudThemes.Get((HudTheme)(-1)), DpsHudThemes.Get(HudTheme.DefaultDark)), "非法主题稳定回退默认深色");
+        foreach (var id in all)
+        {
+            var palette = DpsHudThemes.Get(id);
+            Require(palette.Id == id && ReferenceEquals(palette, DpsHudThemes.Get(id)), "颜色定义按主题复用，不每帧创建");
+            var properties = typeof(ThemeDefinition).GetProperties().Where(p => p.PropertyType == typeof(Color)).ToArray();
+            foreach (var property in properties)
+            {
+                var c = (Color)property.GetValue(palette)!;
+                Require(new[] { c.R, c.G, c.B, c.A }.All(v => float.IsFinite(v) && v >= 0 && v <= 1), "主题角色不能出现非法颜色：" + property.Name);
+            }
+            var surfaces = new[] { palette.SettingsBackground, palette.OverlayBackground, palette.ControlBackground,
+                palette.BarTrack, palette.BarFill, palette.Hover, palette.Pressed };
+            foreach (var surface in surfaces)
+            {
+                foreach (var backdrop in new[] { Colors.Black, Colors.White })
+                    {
+                        // 半透明悬停态实际覆盖 HUD 背板，并非直接覆盖游戏场景。
+                        var baseColor = surface == palette.Hover || surface == palette.Pressed
+                            ? Over(new Color(palette.PanelBackground.R, palette.PanelBackground.G, palette.PanelBackground.B, 0.92f), backdrop) : backdrop;
+                        Require(Ratio(palette.Primary, Over(surface, baseColor)) >= 4.5,
+                            "三主题正文在内容/菜单/按钮/进度条及实际透明叠加后须可读：" + id + " / " + surface.ToHtml());
+                    }
+            }
+            var panel = new Color(palette.PanelBackground.R, palette.PanelBackground.G, palette.PanelBackground.B, 0.92f);
+            foreach (var backdrop in new[] { Colors.Black, Colors.White })
+            {
+                Require(Ratio(palette.Primary, Over(panel, backdrop)) >= 4.5 && Ratio(palette.Title, Over(panel, backdrop)) >= 4.5,
+                    "默认面板透明度下正文和标题须可读");
+                Require(Ratio(palette.Muted, Over(palette.SettingsBackground, backdrop)) >= 4.5, "设置次要文字不能随主题变暗不可读");
+            }
+            Require(!string.IsNullOrWhiteSpace(DpsHudThemes.Label(id, true)) && !string.IsNullOrWhiteSpace(DpsHudThemes.Label(id, false)), "三主题均有双语名称");
+            records.Add(new { id = id.ToString(), colors = properties.ToDictionary(p => p.Name, p => ((Color)p.GetValue(palette)!).ToHtml()),
+                primaryOnFill = Ratio(palette.Primary, palette.BarFill), mutedOnSettings = Ratio(palette.Muted, palette.SettingsBackground) });
+        }
+        var high = DpsHudThemes.Get(HudTheme.HighContrast);
+        Require(Ratio(high.Primary, high.BarFill) >= 7 && Ratio(high.Muted, high.SettingsBackground) >= 12 &&
+            Ratio(high.Title, high.PanelBackground) >= 12 && high.Border.A == 1, "高对比主题须提供更强文本/边框区分");
+        Require(all.Select(t => DpsHudThemes.Get(t).PanelBackground).Distinct().Count() >= 2 &&
+            all.Select(t => DpsHudThemes.Get(t).BarFill).Distinct().Count() == 3, "三主题须有明确且不同的视觉配色");
+        File.WriteAllText(Path.Combine(folder, "实际主题颜色与对比.json"), Json(records), new UTF8Encoding(false));
+        Console.WriteLine("通过：三套实际主题、非法值回退、不可变颜色复用、全部状态/黑白背景叠加的正文对比及高对比阈值");
+    }
+
+    private static void CheckSettings(string folder)
+    {
+        foreach (var version in new[] { 4, 5, 6, 7, 8 })
+        {
+            var old = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + version + ",\"maxRows\":9,\"uiScale\":1.4,\"positionX\":123,\"panelOpacity\":0.63,\"showCombatSummary\":false}", Options)!;
+            Normalize(old);
+            Require(old.SchemaVersion == 9 && old.HudTheme == HudTheme.DefaultDark && old.MaxRows == 9 && old.UiScale == 1.4f &&
+                old.PositionX == 123 && old.PanelOpacity == 0.63f && !old.ShowCombatSummary, "Schema4–8升级保留旧值，缺失主题补默认深色");
+        }
+        foreach (var id in new[] { HudTheme.DefaultDark, HudTheme.GameBlend, HudTheme.HighContrast, (HudTheme)999, (HudTheme)(-1) })
+        {
+            var settings = Seed(); settings.HudTheme = id;
+            var before = Clone(settings);
+            Normalize(settings);
+            var file = Path.Combine(folder, "theme-" + (int)id + ".json");
+            File.WriteAllText(file, Json(Clone(settings)), new UTF8Encoding(false));
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(File.ReadAllText(file), Options)!;
+            Normalize(restored);
+            Require(restored.HudTheme == DpsHudThemes.Normalize(id) && Json(restored) == Json(settings), "三主题须经实际Normalize/Clone/JSON及文件保存恢复，非法值可靠回退");
+            foreach (var property in typeof(DpsMeterSettingsData).GetProperties().Where(p => p.Name != "HudTheme"))
+                Require(Equals(property.GetValue(restored), property.GetValue(before)), "切换主题不得修改其他合法设置：" + property.Name);
+        }
+        Console.WriteLine("通过：Schema4–8主题默认升级、三主题/非法值实际克隆和辅助文件往返，其余全部设置不变");
+    }
+
+    private static void CheckPresets()
+    {
+        var expected = new[] { HudTheme.DefaultDark, HudTheme.DefaultDark, HudTheme.HighContrast, HudTheme.GameBlend };
+        foreach (var preset in Enum.GetValues<HudLayoutPreset>())
+        foreach (var id in Enum.GetValues<HudTheme>())
+        {
+            var settings = Seed(); settings.HudTheme = id;
+            DpsHudPresets.Apply(settings, preset);
+            Require(settings.HudTheme == expected[(int)preset], "四预设主题映射应明确");
+            settings.HudTheme = id; Normalize(settings);
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(Json(Clone(settings)), Options)!;
+            Require(restored.HudTheme == id, "应用预设后手动换主题须保存，不重新套用预设");
+        }
+        Console.WriteLine("通过：四预设×三主题的一次应用及后续手动换主题保存，不增加持续预设模式");
+    }
+
+    private static void CheckViewsAndIdentity()
+    {
+        var selected = typeof(DpsMeterUi).GetField("_selectedPlayerIndex", Flags)!;
+        var scope = typeof(DpsMeterUi).GetField("_scopeIndex", Flags)!;
+        var awaiting = typeof(DpsMeterUi).GetField("_selfAwaitingLocal", Flags)!;
+        var build = typeof(DpsMeterUi).GetMethod("BuildDamageView", Flags)!;
+        var rich = typeof(DpsMeterUi).GetMethod("BuildRichRowText", Flags)!;
+        var oldSelected = selected.GetValue(null); var oldScope = scope.GetValue(null); var oldAwaiting = awaiting.GetValue(null);
+        var player = StageThreeChecks.Player();
+        var snapshot = new CombatStatsSnapshot(true, 10, 2, new[] { player, player with { PlayerNetId = 2, IsLocalPlayer = false } }, 4, 703);
+        var frozen = Json(snapshot);
+        try
+        {
+            selected.SetValue(null, 0); awaiting.SetValue(null, false);
+            foreach (var compact in new[] { false, true })
+            foreach (var sort in Enum.GetValues<HudSortMode>())
+            foreach (var scopeIndex in new[] { 0, 1, 2 })
+            {
+                scope.SetValue(null, scopeIndex);
+                var settings = Seed(); settings.CompactMode = compact; settings.SortMode = sort;
+                var expected = Json(build.Invoke(null, new object[] { settings, snapshot })!);
+                foreach (var id in Enum.GetValues<HudTheme>())
+                {
+                    settings.HudTheme = id;
+                    Require(Json(build.Invoke(null, new object[] { settings, snapshot })!) == expected && Json(snapshot) == frozen,
+                        "换主题不得改变真实视图的范围/模块/字段/排序/数值或统计快照");
+                    var text = (string)rich.Invoke(null, new object[] { new DamageRowData("[b]玩家[/b]", 0, Details: "[x]", NameColorHex: "A1B2C3", IsLocalPlayer: true), id })!;
+                    Require(text.Contains("#A1B2C3") && text.Contains("#" + DpsHudThemes.Get(id).LocalPlayer.ToHtml(false)) &&
+                        !text.Contains("[b]玩家[/b]") && !text.Contains(" [x]"), "主题保留职业色及你标记，动态文本继续转义");
+                }
+            }
+        }
+        finally { selected.SetValue(null, oldSelected); scope.SetValue(null, oldScope); awaiting.SetValue(null, oldAwaiting); }
+        Console.WriteLine("通过：108个实际视图组合跨三主题统计/布局语义不变，职业色与富文本转义保留");
+    }
+}

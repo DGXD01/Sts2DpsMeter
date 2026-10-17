@@ -14,15 +14,14 @@ public static partial class DpsMeterUi
     private const int ScopeCombat = 0;
     private const int ScopeTeam = 2;
 
-    private static readonly Color PanelBackground = new(0f, 0f, 0f, 0.92f);
-    private static readonly Color PanelBorder = new(0.92f, 0.95f, 1f, 0.88f);
-    private static readonly Color TitleBlue = new(0.48f, 0.74f, 1f);
-    private static readonly Color ArrowBlue = new(0.48f, 0.72f, 1f);
-    private static readonly Color BarBackground = new(0.11f, 0.12f, 0.145f, 0.96f);
-    private static readonly Color BarFill = new(0.82f, 0.08f, 0.1f, 1f);
-    private static readonly Color DropdownBackground = new(0.06f, 0.065f, 0.08f, 0.98f);
-    private static readonly Color PrimaryText = Colors.White;
-    private static readonly Color MutedText = new(0.82f, 0.85f, 0.9f);
+    private static ThemeDefinition Palette => DpsHudThemes.Get(DpsMeterSettings.Current.HudTheme);
+    private static Color TitleColor => Palette.Title;
+    private static Color PrimaryText => Palette.Primary;
+    private static Color MutedText => Palette.Muted;
+    private static Color PanelBorder => Palette.Border;
+    private static Color BarBackground => Palette.BarTrack;
+    private static Color BarFill => Palette.BarFill;
+    private static HudTheme? _appliedTheme;
 
     private static CanvasLayer? _canvas;
     private static PanelContainer? _panel;
@@ -175,6 +174,7 @@ public static partial class DpsMeterUi
 
         _panel.Scale = new Vector2(settings.UiScale, settings.UiScale);
         _panel.PivotOffset = Vector2.Zero;
+        ApplyHudTheme(settings.HudTheme);
         ApplyPanelStyle(settings);
         var scopeChanged = NormalizeScopeSelection(snapshot.Players.Count);
         _contentDivider!.Visible = !collapsed;
@@ -718,46 +718,35 @@ public static partial class DpsMeterUi
     }
 
 
-    private static string BuildRichRowText(DamageRowData rowData)
+    private static string BuildRichRowText(DamageRowData rowData, HudTheme theme)
     {
+        var palette = DpsHudThemes.Get(theme);
         var escapedName = rowData.Label.EscapeBbcodeTags();
-        var colorHex = NormalizeColorHex(rowData.NameColorHex);
+        var colorHex = NormalizeColorHex(rowData.NameColorHex, palette.Primary.ToHtml(false));
         var text = $"[b][color=#{colorHex}]{escapedName}[/color][/b]";
 
         if (rowData.IsLocalPlayer)
         {
-            text += $" [color=#7fd3ff]{L("（你）", "(You)")}[/color]";
+            text += $" [color=#{palette.LocalPlayer.ToHtml(false)}]{L("（你）", "(You)")}[/color]";
         }
 
         if (!string.IsNullOrWhiteSpace(rowData.Details))
         {
-            text += $" [color=#9aa4b2]{rowData.Details.EscapeBbcodeTags()}[/color]";
+            text += $" [color=#{palette.Muted.ToHtml(false)}]{rowData.Details.EscapeBbcodeTags()}[/color]";
         }
 
         return text;
     }
 
-    private static string NormalizeColorHex(string? value)
+    private static string NormalizeColorHex(string? value, string fallback)
     {
         var colorHex = value?.Trim().TrimStart('#') ?? string.Empty;
         if (colorHex.Length != 6 || colorHex.Any(character => !Uri.IsHexDigit(character)))
         {
-            return "FFFFFF";
+            return fallback;
         }
 
         return colorHex.ToUpperInvariant();
-    }
-
-    private static StyleBoxFlat CreateBarStyle(Color color, int radius)
-    {
-        return new StyleBoxFlat
-        {
-            BgColor = color,
-            CornerRadiusTopLeft = radius,
-            CornerRadiusTopRight = radius,
-            CornerRadiusBottomLeft = radius,
-            CornerRadiusBottomRight = radius
-        };
     }
 
     private static bool NormalizeScopeSelection(int playerCount)
@@ -924,7 +913,7 @@ public static partial class DpsMeterUi
             return;
         }
 
-        _panelStyle.BgColor = new Color(PanelBackground.R, PanelBackground.G, PanelBackground.B, settings.PanelOpacity);
+        _panelStyle.BgColor = new Color(Palette.PanelBackground.R, Palette.PanelBackground.G, Palette.PanelBackground.B, settings.PanelOpacity);
         _panelStyle.BorderColor = PanelBorder;
     }
 
@@ -942,25 +931,10 @@ public static partial class DpsMeterUi
             CustomMinimumSize = new Vector2(MinimumPanelWidth, 0f),
             MouseFilter = Control.MouseFilterEnum.Stop
         };
-        DpsHudTypography.Apply(_panel);
+        _appliedTheme = null;
+        DpsHudThemeStyles.Apply(_panel, DpsMeterSettings.Current.HudTheme);
 
-        _panelStyle = new StyleBoxFlat
-        {
-            BgColor = PanelBackground,
-            BorderColor = PanelBorder,
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 6,
-            CornerRadiusTopRight = 6,
-            CornerRadiusBottomLeft = 6,
-            CornerRadiusBottomRight = 6,
-            ContentMarginLeft = 8,
-            ContentMarginTop = 6,
-            ContentMarginRight = 8,
-            ContentMarginBottom = 6
-        };
+        _panelStyle = DpsHudThemeStyles.Panel(HudPanelKind.Main, Palette);
         _panel.AddThemeStyleboxOverride("panel", _panelStyle);
         _panel.GuiInput += OnPanelGuiInput;
         canvas.AddChild(_panel);
@@ -999,8 +973,8 @@ public static partial class DpsMeterUi
             // 保留标题的点击/拖动传播；全文浮层由 Host 每帧检测，不依赖原生 TooltipText。
             MouseFilter = Control.MouseFilterEnum.Pass
         };
-        _header.AddThemeColorOverride("font_color", TitleBlue);
-        _header.AddThemeColorOverride("font_outline_color", Colors.Black);
+        _header.AddThemeColorOverride("font_color", TitleColor);
+        _header.AddThemeColorOverride("font_outline_color", Palette.Outline);
         _header.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
         _header.AddThemeFontSizeOverride("font_size", DpsHudTypography.HeaderSize);
         headerRow.AddChild(_header);
@@ -1037,7 +1011,7 @@ public static partial class DpsMeterUi
 
         _contentDivider = new ColorRect
         {
-            Color = new Color(PanelBorder.R, PanelBorder.G, PanelBorder.B, 0.18f),
+            Color = Palette.Divider,
             CustomMinimumSize = new Vector2(0, 1),
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
@@ -1082,56 +1056,49 @@ public static partial class DpsMeterUi
             FocusMode = Control.FocusModeEnum.None,
             MouseFilter = Control.MouseFilterEnum.Stop
         };
-        button.AddThemeColorOverride("font_color", ArrowBlue);
-        button.AddThemeColorOverride("font_hover_color", new Color(0.45f, 0.78f, 1f));
-        button.AddThemeColorOverride("font_pressed_color", new Color(0.1f, 0.4f, 0.9f));
-        button.AddThemeColorOverride("font_disabled_color", new Color(ArrowBlue.R, ArrowBlue.G, ArrowBlue.B, 0.28f));
+        DpsHudThemeStyles.Arrow(button, Palette);
         button.AddThemeFontSizeOverride("font_size", 20);
-        button.AddThemeStyleboxOverride("normal", CreateFlatButtonStyle(new Color(0f, 0f, 0f, 0f)));
-        button.AddThemeStyleboxOverride("hover", CreateFlatButtonStyle(new Color(0.08f, 0.28f, 0.62f, 0.5f)));
-        button.AddThemeStyleboxOverride("pressed", CreateFlatButtonStyle(new Color(0.05f, 0.18f, 0.42f, 0.75f)));
-        button.AddThemeStyleboxOverride("focus", CreateFlatButtonStyle(new Color(0f, 0f, 0f, 0f)));
         button.Pressed += pressed;
         return button;
     }
 
-    private static StyleBoxFlat CreateFlatButtonStyle(Color background)
-    {
-        return new StyleBoxFlat
-        {
-            BgColor = background,
-            CornerRadiusTopLeft = 5,
-            CornerRadiusTopRight = 5,
-            CornerRadiusBottomLeft = 5,
-            CornerRadiusBottomRight = 5
-        };
-    }
-
     private static void ApplyDropdownStyle(OptionButton option)
     {
-        var normal = new StyleBoxFlat
+        DpsHudThemeStyles.Apply(option, DpsMeterSettings.Current.HudTheme);
+        option.GetPopup().Theme = option.Theme;
+    }
+
+    private static void ApplyHudTheme(HudTheme theme)
+    {
+        theme = DpsHudThemes.Normalize(theme);
+        if (_appliedTheme == theme) return;
+        _appliedTheme = theme;
+        var palette = DpsHudThemes.Get(theme);
+        DpsHudThemeStyles.Apply(_panel!, theme);
+        _header!.AddThemeColorOverride("font_color", palette.Title);
+        _header.AddThemeColorOverride("font_outline_color", palette.Outline);
+        foreach (var button in new[] { _previousPlayerButton, _nextPlayerButton, _settingsButton, _collapseButton })
+            if (IsAlive(button)) DpsHudThemeStyles.Arrow(button!, palette);
+        foreach (var option in new[] { _scopeOption, _playerViewOption })
         {
-            BgColor = DropdownBackground,
-            BorderColor = new Color(PanelBorder.R, PanelBorder.G, PanelBorder.B, 0.72f),
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 5,
-            CornerRadiusTopRight = 5,
-            CornerRadiusBottomLeft = 5,
-            CornerRadiusBottomRight = 5,
-            ContentMarginLeft = 7,
-            ContentMarginRight = 7
-        };
-        var hover = normal.Duplicate() as StyleBoxFlat ?? normal;
-        hover.BorderColor = new Color(0.32f, 0.72f, 1f, 0.95f);
-        var pressed = normal.Duplicate() as StyleBoxFlat ?? normal;
-        pressed.BgColor = new Color(0.08f, 0.1f, 0.14f, 1f);
-        option.AddThemeStyleboxOverride("normal", normal);
-        option.AddThemeStyleboxOverride("hover", hover);
-        option.AddThemeStyleboxOverride("pressed", pressed);
-        option.AddThemeStyleboxOverride("focus", hover);
+            if (!IsAlive(option)) continue;
+            ApplyDropdownStyle(option!);
+            option!.AddThemeColorOverride("font_color", palette.Primary);
+        }
+        if (_contentDivider is ColorRect divider) divider.Color = palette.Divider;
+        foreach (var (panel, kind) in new[]
+        {
+            (_headerTooltipPanel, HudPanelKind.Tooltip), (_combatSummaryPanel, HudPanelKind.Summary)
+        })
+        {
+            if (!IsAlive(panel)) continue;
+            DpsHudThemeStyles.Apply(panel!, theme);
+            panel!.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(kind, palette));
+        }
+        if (IsAlive(_headerTooltipLabel)) _headerTooltipLabel!.AddThemeColorOverride("font_color", palette.Primary);
+        for (var index = 0; index < CombatSummaryLabels.Length; index++)
+            if (IsAlive(CombatSummaryLabels[index])) CombatSummaryLabels[index].AddThemeColorOverride("font_color", index == 0 ? palette.Title : palette.Primary);
+        if (IsAlive(_snapPreview)) _snapPreview!.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Snap, palette));
     }
 
     private static void OnPanelGuiInput(InputEvent @event)

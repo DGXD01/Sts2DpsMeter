@@ -12,7 +12,7 @@ internal static class StageSevenChecks
     private const BindingFlags Flags = BindingFlags.Static | BindingFlags.NonPublic;
     private static readonly HashSet<string> DisplayFields = new(StringComparer.Ordinal)
     {
-        "CompactMode", "MaxRows", "UiScale", "ShowSourceIcons", "TooltipDetailMode", "EnableRowDetails",
+        "HudTheme", "CompactMode", "MaxRows", "UiScale", "ShowSourceIcons", "TooltipDetailMode", "EnableRowDetails",
         "ShowDealtBreakdown", "ShowTakenBreakdown", "ShowBlockGained", "ShowEnergySpent",
         "ShowEnergyGivenToAllies", "ShowBlockGivenToAllies", "ShowHealingGivenToAllies", "ShowCardsDrawnForAllies",
         "ShowFieldName", "ShowFieldDamage", "ShowFieldPercentage", "ShowFieldHits", "ShowFieldMaxHit", "ShowFieldAverage",
@@ -30,7 +30,7 @@ internal static class StageSevenChecks
         (settings.ShowFieldPercentage ? 4 : 0) | (settings.ShowFieldHits ? 8 : 0) | (settings.ShowFieldMaxHit ? 16 : 0) | (settings.ShowFieldAverage ? 32 : 0);
     private static DpsMeterSettingsData Seed() => new()
     {
-        PositionX = 489.5f, PositionY = 208.8f, LockPosition = true, StartVisible = false,
+        HudTheme = HudTheme.GameBlend, PositionX = 489.5f, PositionY = 208.8f, LockPosition = true, StartVisible = false,
         SnapEnabled = false, SnapDistance = 57, ScreenMargin = 33, SnapAnchor = HudSnapAnchor.Left | HudSnapAnchor.Bottom,
         PanelOpacity = 0.63f, LowInterferenceMode = HudLowInterferenceMode.AutoCollapse, LowInterferenceOpacity = 0.36f,
         ShowCombatSummary = false, CombatSummaryDuration = 8, Columns = 1,
@@ -122,8 +122,8 @@ internal static class StageSevenChecks
             Normalize(restored);
             Require(Json(restored) == Json(settings) && restored.MaxRows == 7 && restored.UiScale == 1.35f && restored.ShowFieldHits &&
                 !restored.ShowDealtBreakdown && restored.SummaryTurn, "应用后的单项改动须经过真实 Normalize/Clone/JSON 和文件往返保留，不重新套用预设");
-            Require(restored.SchemaVersion == 8 && !Json(restored).Contains("layoutPreset", StringComparison.OrdinalIgnoreCase),
-                "不新增强制预设模式或改变既有 Schema");
+            Require(restored.SchemaVersion == 9 && !Json(restored).Contains("layoutPreset", StringComparison.OrdinalIgnoreCase),
+                "不新增强制预设模式，配置沿用现行 Schema");
         }
         Console.WriteLine("通过：四预设后手动改模块/字段/图标/行数/缩放/摘要，经真实归一化/Clone/JSON及独立文件保存恢复，不覆盖用户修改");
     }

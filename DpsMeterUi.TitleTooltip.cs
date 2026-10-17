@@ -19,24 +19,8 @@ public static partial class DpsMeterUi
             ZIndex = 100,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        DpsHudTypography.Apply(_headerTooltipPanel);
-        _headerTooltipPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-        {
-            BgColor = new Color(0.035f, 0.045f, 0.07f, 0.98f),
-            BorderColor = PanelBorder,
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 5,
-            CornerRadiusTopRight = 5,
-            CornerRadiusBottomLeft = 5,
-            CornerRadiusBottomRight = 5,
-            ContentMarginLeft = 12,
-            ContentMarginRight = 12,
-            ContentMarginTop = 8,
-            ContentMarginBottom = 8
-        });
+        DpsHudThemeStyles.Apply(_headerTooltipPanel, DpsMeterSettings.Current.HudTheme);
+        _headerTooltipPanel.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Tooltip, Palette));
         canvas.AddChild(_headerTooltipPanel);
         _headerTooltipLabel = new Label
         {

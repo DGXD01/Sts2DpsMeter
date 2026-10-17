@@ -15,7 +15,8 @@ public enum HudTooltipDetail
 
 public sealed class DpsMeterSettingsData
 {
-    public int SchemaVersion { get; set; } = 8;
+    public int SchemaVersion { get; set; } = 9;
+    public HudTheme HudTheme { get; set; } = HudTheme.DefaultDark;
     public bool ShowCombatSummary { get; set; } = true;
     public float CombatSummaryDuration { get; set; } = DpsCombatSummary.DefaultDuration;
     public HudPlayerView MultiplayerDefaultView { get; set; } = HudPlayerView.CurrentPlayer;
@@ -66,7 +67,7 @@ public static class DpsMeterSettings
     public const float MaxUiScale = 2.0f;
     public const float UiScaleStep = 0.05f;
 
-    private const int CurrentSchemaVersion = 8;
+    private const int CurrentSchemaVersion = 9;
     private const int MaxRowsLimit = 12;
 
     private static readonly object SyncRoot = new();
@@ -182,6 +183,7 @@ public static class DpsMeterSettings
         return new DpsMeterSettingsData
         {
             SchemaVersion = source.SchemaVersion,
+            HudTheme = source.HudTheme,
             ShowCombatSummary = source.ShowCombatSummary,
             CombatSummaryDuration = source.CombatSummaryDuration,
             MultiplayerDefaultView = source.MultiplayerDefaultView,
@@ -230,6 +232,7 @@ public static class DpsMeterSettings
     private static void Normalize(DpsMeterSettingsData settings)
     {
         settings.SchemaVersion = CurrentSchemaVersion;
+        settings.HudTheme = DpsHudThemes.Normalize(settings.HudTheme);
         settings.CombatSummaryDuration = DpsCombatSummary.NormalizeDuration(settings.CombatSummaryDuration);
         settings.MultiplayerDefaultView = HudPlayerSelection.Normalize(settings.MultiplayerDefaultView);
         settings.SnapDistance = float.IsFinite(settings.SnapDistance) ? Math.Clamp(settings.SnapDistance, 4, 80) : 24;

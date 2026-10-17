@@ -77,12 +77,13 @@ public static partial class DpsMeterUi
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
         private readonly List<DamageRowControls> _rows = new();
+        private HudTheme? _theme;
 
         public DamageSectionControls()
         {
             Container.AddThemeConstantOverride("separation", 4);
-            _heading.AddThemeColorOverride("font_color", TitleBlue);
-            _heading.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _heading.AddThemeColorOverride("font_color", TitleColor);
+            _heading.AddThemeColorOverride("font_outline_color", Palette.Outline);
             _heading.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
             _heading.AddThemeFontSizeOverride("font_size", 14);
             Container.AddChild(_heading);
@@ -92,6 +93,11 @@ public static partial class DpsMeterUi
             long total, DpsMeterSettingsData settings, HudRowField fields, string language,
             List<DamageRowControls> activeRows)
         {
+            if (_theme != DpsHudThemes.Normalize(settings.HudTheme))
+            {
+                _theme = DpsHudThemes.Normalize(settings.HudTheme);
+                _heading.AddThemeColorOverride("font_color", DpsHudThemes.Get(_theme.Value).Title);
+            }
             var changed = SetVisible(Container, true);
             changed |= SetVisible(_heading, !string.IsNullOrWhiteSpace(heading));
             if (_heading.Text != (heading ?? string.Empty))
@@ -141,6 +147,7 @@ public static partial class DpsMeterUi
         private string? _lastLanguage;
         private (bool Icons, HudTooltipDetail Tooltip, HudRowField Fields, bool Details, bool Expanded, int Rank)? _lastPresentation;
         private bool _measurementsDirty = true;
+        private HudTheme? _theme;
         private bool _canExpand;
         private bool _pressed;
 
@@ -158,8 +165,8 @@ public static partial class DpsMeterUi
                 MouseFilter = Control.MouseFilterEnum.Ignore
             };
             _progress.SetAnchorsPreset(Control.LayoutPreset.FullRect);
-            _progress.AddThemeStyleboxOverride("background", CreateBarStyle(BarBackground, 4));
-            _progress.AddThemeStyleboxOverride("fill", CreateBarStyle(BarFill, 4));
+            _progress.AddThemeStyleboxOverride("background", DpsHudThemeStyles.Flat(BarBackground, Colors.Transparent, 4));
+            _progress.AddThemeStyleboxOverride("fill", DpsHudThemeStyles.Flat(BarFill, Colors.Transparent, 4));
             _row.AddChild(_progress);
 
             var overlay = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -180,7 +187,7 @@ public static partial class DpsMeterUi
                 ExpandMode = TextureRect.ExpandModeEnum.IgnoreSize,
                 StretchMode = TextureRect.StretchModeEnum.KeepAspectCentered,
                 SizeFlagsVertical = Control.SizeFlags.ShrinkCenter,
-                SelfModulate = TitleBlue,
+                SelfModulate = TitleColor,
                 TextureFilter = CanvasItem.TextureFilterEnum.Linear,
                 MouseFilter = Control.MouseFilterEnum.Ignore
             };
@@ -208,7 +215,7 @@ public static partial class DpsMeterUi
             };
             _richName.SetAnchorsPreset(Control.LayoutPreset.FullRect);
             _richName.AddThemeColorOverride("default_color", PrimaryText);
-            _richName.AddThemeColorOverride("font_outline_color", Colors.Black);
+            _richName.AddThemeColorOverride("font_outline_color", Palette.Outline);
             _richName.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
             _nameColumn.AddChild(_richName);
             for (var index = 0; index < _values.Length; index++)
@@ -231,13 +238,16 @@ public static partial class DpsMeterUi
         public bool Update(DamageRowData data, double percentage, DpsMeterSettingsData settings,
             HudRowField fields, string language, string key, int rank)
         {
+            var theme = DpsHudThemes.Normalize(settings.HudTheme);
+            var themeChanged = _theme != theme;
+            if (themeChanged) ApplyTheme(theme);
             var compact = settings.CompactMode;
             var expanded = settings.EnableRowDetails && RowSelection.SelectedKey == key && data.Info is not null;
             var presentation = (settings.ShowSourceIcons, settings.TooltipDetailMode, fields,
                 settings.EnableRowDetails, expanded, rank);
             var changed = SetVisible(Root, true);
             if (Key == key && _lastData == data && _lastPercentage == percentage && _compact == compact &&
-                _lastLanguage == language && _lastPresentation == presentation) return changed;
+                _lastLanguage == language && _lastPresentation == presentation && !themeChanged) return changed;
             if (Key != key) _pressed = false;
             Key = key;
             _canExpand = settings.EnableRowDetails && data.Info is not null;
@@ -256,7 +266,7 @@ public static partial class DpsMeterUi
             var showName = fields.HasFlag(HudRowField.Name);
             _nameColumn.CustomMinimumSize = new Vector2(showName ? 48 : 20, 0);
             _name.Text = showName ? data.Label : $"#{rank}";
-            _richName.Text = showName && data.Details is not null ? BuildRichRowText(data) : string.Empty;
+            _richName.Text = showName && data.Details is not null ? BuildRichRowText(data, theme) : string.Empty;
             _name.Visible = !showName || data.Details is null;
             _richName.Visible = showName && data.Details is not null;
             var chinese = language == "zhs";
@@ -290,6 +300,23 @@ public static partial class DpsMeterUi
             _lastLanguage = language;
             _lastPresentation = presentation;
             return changed;
+        }
+
+        private void ApplyTheme(HudTheme theme)
+        {
+            _theme = theme;
+            var palette = DpsHudThemes.Get(theme);
+            _progress.AddThemeStyleboxOverride("background", DpsHudThemeStyles.Flat(palette.BarTrack, Colors.Transparent, 4));
+            _progress.AddThemeStyleboxOverride("fill", DpsHudThemeStyles.Flat(palette.BarFill, Colors.Transparent, 4));
+            _icon.SelfModulate = palette.Title;
+            foreach (var label in _values.Append(_name))
+            {
+                label.AddThemeColorOverride("font_color", palette.Primary);
+                label.AddThemeColorOverride("font_outline_color", palette.Outline);
+            }
+            _richName.AddThemeColorOverride("default_color", palette.Primary);
+            _richName.AddThemeColorOverride("font_outline_color", palette.Outline);
+            _details.AddThemeColorOverride("font_color", palette.Muted);
         }
 
         private void OnGuiInput(InputEvent input)
@@ -351,7 +378,7 @@ public static partial class DpsMeterUi
                 MouseFilter = Control.MouseFilterEnum.Ignore
             };
             label.AddThemeColorOverride("font_color", PrimaryText);
-            label.AddThemeColorOverride("font_outline_color", Colors.Black);
+            label.AddThemeColorOverride("font_outline_color", Palette.Outline);
             label.AddThemeConstantOverride("outline_size", DpsHudTypography.OutlineSize);
             return label;
         }

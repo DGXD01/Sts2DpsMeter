@@ -21,24 +21,8 @@ public static partial class DpsMeterUi
             ZIndex = 10,
             MouseFilter = Control.MouseFilterEnum.Ignore
         };
-        DpsHudTypography.Apply(_combatSummaryPanel);
-        _combatSummaryPanel.AddThemeStyleboxOverride("panel", new StyleBoxFlat
-        {
-            BgColor = new Color(0.035f, 0.045f, 0.07f, 0.97f),
-            BorderColor = PanelBorder,
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 5,
-            CornerRadiusTopRight = 5,
-            CornerRadiusBottomLeft = 5,
-            CornerRadiusBottomRight = 5,
-            ContentMarginLeft = 12,
-            ContentMarginRight = 12,
-            ContentMarginTop = 10,
-            ContentMarginBottom = 10
-        });
+        DpsHudThemeStyles.Apply(_combatSummaryPanel, DpsMeterSettings.Current.HudTheme);
+        _combatSummaryPanel.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Summary, Palette));
         canvas.AddChild(_combatSummaryPanel);
         var layout = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         layout.AddThemeConstantOverride("separation", 5);
@@ -54,7 +38,7 @@ public static partial class DpsMeterUi
                 TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming,
                 MouseFilter = Control.MouseFilterEnum.Ignore
             };
-            label.AddThemeColorOverride("font_color", index == 0 ? TitleBlue : PrimaryText);
+            label.AddThemeColorOverride("font_color", index == 0 ? TitleColor : PrimaryText);
             label.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
             layout.AddChild(label);
             CombatSummaryLabels[index] = label;

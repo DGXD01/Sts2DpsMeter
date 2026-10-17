@@ -6,11 +6,10 @@ namespace Sts2DpsMeter;
 
 public static class DpsMeterSettingsUi
 {
-    private static readonly Color SettingsBackground = new(0.035f, 0.045f, 0.07f, 0.97f);
-    private static readonly Color SettingsBorder = new(0.32f, 0.72f, 1f, 0.95f);
-    private static readonly Color HeadingColor = new(0.56f, 0.86f, 1f);
-    private static readonly Color MutedColor = new(0.82f, 0.85f, 0.9f);
-    private static readonly Color BodyColor = Colors.White;
+    private static ThemeDefinition Palette => DpsHudThemes.Get(DpsMeterSettings.Current.HudTheme);
+    private static Color HeadingColor => Palette.Title;
+    private static Color MutedColor => Palette.Muted;
+    private static Color BodyColor => Palette.Primary;
 
     private static PanelContainer? _panel;
     private static VBoxContainer? _content;
@@ -66,6 +65,10 @@ public static class DpsMeterSettingsUi
             return;
         }
 
+        DpsHudThemeStyles.Apply(_panel!, DpsMeterSettings.Current.HudTheme);
+        _panel!.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Settings, Palette));
+        _titleLabel!.AddThemeColorOverride("font_color", HeadingColor);
+        _introductionLabel!.AddThemeColorOverride("font_color", MutedColor);
         UpdateLocalizedHeader();
         RebuildContent();
         _panel!.Visible = _visible;
@@ -82,26 +85,9 @@ public static class DpsMeterSettingsUi
             Visible = false,
             MouseFilter = Control.MouseFilterEnum.Stop
         };
-        DpsHudTypography.Apply(_panel);
+        DpsHudThemeStyles.Apply(_panel, DpsMeterSettings.Current.HudTheme);
 
-        var style = new StyleBoxFlat
-        {
-            BgColor = SettingsBackground,
-            BorderColor = SettingsBorder,
-            BorderWidthLeft = 1,
-            BorderWidthTop = 1,
-            BorderWidthRight = 1,
-            BorderWidthBottom = 1,
-            CornerRadiusTopLeft = 7,
-            CornerRadiusTopRight = 7,
-            CornerRadiusBottomLeft = 7,
-            CornerRadiusBottomRight = 7,
-            ContentMarginLeft = 12,
-            ContentMarginTop = 10,
-            ContentMarginRight = 12,
-            ContentMarginBottom = 10
-        };
-        _panel.AddThemeStyleboxOverride("panel", style);
+        _panel.AddThemeStyleboxOverride("panel", DpsHudThemeStyles.Panel(HudPanelKind.Settings, Palette));
         canvas.AddChild(_panel);
 
         var root = new VBoxContainer();
@@ -165,6 +151,19 @@ public static class DpsMeterSettingsUi
         var settings = DpsMeterSettings.Current;
 
         AddLayoutPresets();
+        AddSection(DpsLocalization.Get("HUD 主题", "HUD Theme"));
+        AddOptionRow(DpsLocalization.Get("界面主题", "Appearance"),
+            new[] { DpsHudThemes.Label(HudTheme.DefaultDark, DpsLocalization.IsChinese),
+                DpsHudThemes.Label(HudTheme.GameBlend, DpsLocalization.IsChinese),
+                DpsHudThemes.Label(HudTheme.HighContrast, DpsLocalization.IsChinese) }, (int)settings.HudTheme, value =>
+            {
+                DpsMeterSettings.Current.HudTheme = DpsHudThemes.Normalize((HudTheme)value);
+                SaveAndRefresh();
+                Callable.From(Refresh).CallDeferred();
+            });
+        AddText(DpsLocalization.Get(
+            "主题立即应用到 HUD、设置、菜单、提示和战斗总结，仅改变视觉。面板透明度及低干扰仍按原设置生效。极简/默认预设使用默认深色，详细使用高对比，多人使用游戏融合；应用后仍可单独切换主题。",
+            "Themes immediately update the HUD, Settings, menus, tips and combat summary without changing data or layout. Saved opacity and combat visibility still apply. Minimal/Default use Default Dark, Detailed uses High Contrast, and Multiplayer uses Game Blend; the theme remains editable afterward."), MutedColor);
 
         AddSection(DpsLocalization.Get("显示与行为", "Display & Behavior"));
         AddToggle(DpsLocalization.Get("启动时显示 HUD", "Start with HUD visible"), settings.StartVisible, value =>
@@ -335,8 +334,8 @@ public static class DpsMeterSettingsUi
         AddSliderRow(DpsLocalization.Get("吸附距离", "Snap distance"), settings.SnapDistance, 4, 80, 1, value => settings.SnapDistance = (float)value);
         AddSliderRow(DpsLocalization.Get("屏幕留白", "Screen margin"), settings.ScreenMargin, 0, 64, 1, value => settings.ScreenMargin = (float)value);
         AddText(DpsLocalization.Get(
-            "拖动标题栏时蓝框预览吸附位置，松开后吸附并保存；四角及四边均可吸附。距离和留白使用视口像素，不随 HUD 缩放倍增；磁吸关闭时不保留屏幕留白。已吸附边缘随缩放或分辨率变化重新对齐。",
-            "Drag the header to preview the drop position with a blue outline; release to snap and save. All four edges and corners are supported. Distance and margin use viewport pixels, independent of HUD scale; disabling snapping also disables the margin. Docked edges realign after scale or resolution changes."), MutedColor);
+            "拖动标题栏时主题强调色边框预览吸附位置，松开后吸附并保存；四角及四边均可吸附。距离和留白使用视口像素，不随 HUD 缩放倍增；磁吸关闭时不保留屏幕留白。已吸附边缘随缩放或分辨率变化重新对齐。",
+            "Drag the header to preview the drop position with a theme-accent outline; release to snap and save. All four edges and corners are supported. Distance and margin use viewport pixels, independent of HUD scale; disabling snapping also disables the margin. Docked edges realign after scale or resolution changes."), MutedColor);
         var resetPosition = new Button
         {
             FocusMode = Control.FocusModeEnum.None,
