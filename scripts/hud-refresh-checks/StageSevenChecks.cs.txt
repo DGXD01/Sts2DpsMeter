@@ -1,0 +1,174 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using Sts2DpsMeter;
+
+internal static class StageSevenChecks
+{
+    private const BindingFlags Flags = BindingFlags.Static | BindingFlags.NonPublic;
+    private static readonly HashSet<string> DisplayFields = new(StringComparer.Ordinal)
+    {
+        "CompactMode", "MaxRows", "UiScale", "ShowSourceIcons", "TooltipDetailMode", "EnableRowDetails",
+        "ShowDealtBreakdown", "ShowTakenBreakdown", "ShowBlockGained", "ShowEnergySpent",
+        "ShowEnergyGivenToAllies", "ShowBlockGivenToAllies", "ShowHealingGivenToAllies", "ShowCardsDrawnForAllies",
+        "ShowFieldName", "ShowFieldDamage", "ShowFieldPercentage", "ShowFieldHits", "ShowFieldMaxHit", "ShowFieldAverage",
+        "SummaryDamage", "SummaryDps", "SummaryDpt", "SummaryTaken", "SummaryTurn", "SummaryHits", "SortMode", "MultiplayerDefaultView"
+    };
+    private static readonly JsonSerializerOptions JsonOptions = (JsonSerializerOptions)typeof(DpsMeterSettings).GetField("JsonOptions", Flags)!.GetValue(null)!;
+    private static string Json(object value) => JsonSerializer.Serialize(value, JsonOptions);
+    private static void Require(bool result, string message)
+    {
+        if (!result) throw new InvalidOperationException(message);
+    }
+    private static void Normalize(DpsMeterSettingsData settings) => typeof(DpsMeterSettings).GetMethod("Normalize", Flags)!.Invoke(null, new object[] { settings });
+    private static DpsMeterSettingsData Clone(DpsMeterSettingsData settings) => (DpsMeterSettingsData)typeof(DpsMeterSettings).GetMethod("Clone", Flags)!.Invoke(null, new object[] { settings })!;
+    private static int Fields(DpsMeterSettingsData settings) => (settings.ShowFieldName ? 1 : 0) | (settings.ShowFieldDamage ? 2 : 0) |
+        (settings.ShowFieldPercentage ? 4 : 0) | (settings.ShowFieldHits ? 8 : 0) | (settings.ShowFieldMaxHit ? 16 : 0) | (settings.ShowFieldAverage ? 32 : 0);
+    private static DpsMeterSettingsData Seed() => new()
+    {
+        PositionX = 489.5f, PositionY = 208.8f, LockPosition = true, StartVisible = false,
+        SnapEnabled = false, SnapDistance = 57, ScreenMargin = 33, SnapAnchor = HudSnapAnchor.Left | HudSnapAnchor.Bottom,
+        PanelOpacity = 0.63f, LowInterferenceMode = HudLowInterferenceMode.AutoCollapse, LowInterferenceOpacity = 0.36f,
+        ShowCombatSummary = false, CombatSummaryDuration = 8, Columns = 1,
+        MaxRows = 7, UiScale = 1.4f, ShowFieldName = false, SummaryHits = true, SortMode = HudSortMode.Name
+    };
+
+    public static void Run(string? artifactDirectory)
+    {
+        CheckDefinitions();
+        CheckSwitchingAndBoundaries();
+        CheckPersistence(artifactDirectory);
+        CheckLiveViewsAndSelection();
+    }
+
+    private static void CheckDefinitions()
+    {
+        var presets = Enum.GetValues<HudLayoutPreset>();
+        var rowCounts = new[] { 3, 5, 10, 8 };
+        var scales = new[] { 0.9f, 1f, 1.1f, 1f };
+        var fieldMasks = new[] { 3, 7, 63, 15 };
+        var moduleCounts = new[] { 1, 2, 8, 8 };
+        foreach (var preset in presets)
+        {
+            var settings = Seed();
+            Require(DpsHudPresets.Apply(settings, preset), "四个明确预设均可应用");
+            var index = (int)preset;
+            var modules = new[] { settings.ShowDealtBreakdown, settings.ShowTakenBreakdown, settings.ShowBlockGained, settings.ShowEnergySpent,
+                settings.ShowEnergyGivenToAllies, settings.ShowBlockGivenToAllies, settings.ShowHealingGivenToAllies, settings.ShowCardsDrawnForAllies };
+            Require(settings.MaxRows == rowCounts[index] && settings.UiScale == scales[index] && Fields(settings) == fieldMasks[index] &&
+                modules.Count(value => value) == moduleCounts[index] && settings.ShowDealtBreakdown, "四套行数/缩放/字段/模块必须与产品说明一致");
+            Require(settings.CompactMode == (preset is HudLayoutPreset.Minimal or HudLayoutPreset.Multiplayer) &&
+                settings.ShowSourceIcons == (preset != HudLayoutPreset.Minimal) && settings.EnableRowDetails == (preset != HudLayoutPreset.Minimal),
+                "极简/多人密度及图标/行详情结果必须可预测");
+            Require(settings.TooltipDetailMode == (preset == HudLayoutPreset.Minimal ? HudTooltipDetail.Simple : HudTooltipDetail.Detailed) &&
+                settings.SortMode == HudSortMode.Damage && settings.MultiplayerDefaultView == (preset == HudLayoutPreset.Multiplayer ? HudPlayerView.Team : HudPlayerView.CurrentPlayer),
+                "提示不误开开发者字段，排序与多人默认必须明确");
+            Require(settings.SummaryDamage && settings.SummaryDps == (index >= 2) && settings.SummaryDpt == (index >= 2) &&
+                !settings.SummaryTaken && !settings.SummaryTurn && !settings.SummaryHits && DpsHudSummary.SelectedCount(settings) <= 3,
+                "摘要须准确重置并遵守三项上限");
+            var normalized = Clone(settings); Normalize(normalized);
+            Require(Json(normalized) == Json(settings), "预设值本身须合法，不能依靠 Save 悄悄改成另一套配置");
+            if (preset == HudLayoutPreset.Default)
+            {
+                var recommended = new DpsMeterSettingsData();
+                foreach (var property in typeof(DpsMeterSettingsData).GetProperties().Where(property => DisplayFields.Contains(property.Name)))
+                    Require(Equals(property.GetValue(settings), property.GetValue(recommended)), "默认预设展示值应匹配现有推荐值");
+            }
+        }
+        Console.WriteLine("通过：四套预设的实际模块/字段/图标/行数/缩放/密度/摘要/提示/排序及多人默认，默认展示匹配推荐值");
+    }
+
+    private static void CheckSwitchingAndBoundaries()
+    {
+        foreach (var first in Enum.GetValues<HudLayoutPreset>())
+        foreach (var second in Enum.GetValues<HudLayoutPreset>())
+        {
+            var settings = Seed(); var before = Clone(settings);
+            DpsHudPresets.Apply(settings, first);
+            DpsHudPresets.Apply(settings, second);
+            var expected = Seed(); DpsHudPresets.Apply(expected, second);
+            Require(Json(settings) == Json(expected), "16 种连续应用不能遗留上个预设的字段/模块");
+            foreach (var property in typeof(DpsMeterSettingsData).GetProperties().Where(property => !DisplayFields.Contains(property.Name)))
+                Require(Equals(property.GetValue(settings), property.GetValue(before)), "预设不得覆盖位置/行为/总结/架构或未来不属于展示白名单的字段：" + property.Name);
+            var once = Json(settings);
+            DpsHudPresets.Apply(settings, second);
+            Require(Json(settings) == once, "重复点击同一预设应幂等");
+        }
+        var invalid = Seed(); var unchanged = Json(invalid);
+        Require(!DpsHudPresets.Apply(invalid, (HudLayoutPreset)999) && !DpsHudPresets.Apply(invalid, (HudLayoutPreset)(-1)) &&
+            Json(invalid) == unchanged, "非法预设不应意外重置用户配置");
+        Console.WriteLine("通过：16 种预设切换、重复点击、非法值不修改以及非展示字段白名单保护");
+    }
+
+    private static void CheckPersistence(string? artifactDirectory)
+    {
+        Require(!string.IsNullOrWhiteSpace(artifactDirectory), "必须把设置测试文件写入指定辅助目录");
+        var directory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(artifactDirectory!))!, "预设保存恢复");
+        Directory.CreateDirectory(directory);
+        foreach (var preset in Enum.GetValues<HudLayoutPreset>())
+        {
+            var settings = Seed(); DpsHudPresets.Apply(settings, preset);
+            settings.MaxRows = 7; settings.UiScale = 1.35f; settings.ShowSourceIcons = !settings.ShowSourceIcons;
+            settings.EnableRowDetails = true; settings.ShowFieldHits = true; settings.ShowDealtBreakdown = false; settings.ShowTakenBreakdown = true;
+            settings.SummaryDamage = settings.SummaryDps = settings.SummaryDpt = false; settings.SummaryTurn = true;
+            Normalize(settings);
+            var file = Path.Combine(directory, preset + ".json");
+            File.WriteAllText(file, Json(Clone(settings)), new UTF8Encoding(false));
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(File.ReadAllText(file), JsonOptions)!;
+            Normalize(restored);
+            Require(Json(restored) == Json(settings) && restored.MaxRows == 7 && restored.UiScale == 1.35f && restored.ShowFieldHits &&
+                !restored.ShowDealtBreakdown && restored.SummaryTurn, "应用后的单项改动须经过真实 Normalize/Clone/JSON 和文件往返保留，不重新套用预设");
+            Require(restored.SchemaVersion == 8 && !Json(restored).Contains("layoutPreset", StringComparison.OrdinalIgnoreCase),
+                "不新增强制预设模式或改变既有 Schema");
+        }
+        Console.WriteLine("通过：四预设后手动改模块/字段/图标/行数/缩放/摘要，经真实归一化/Clone/JSON及独立文件保存恢复，不覆盖用户修改");
+    }
+
+    private static void CheckLiveViewsAndSelection()
+    {
+        var selected = typeof(DpsMeterUi).GetField("_selectedPlayerIndex", Flags)!;
+        var scope = typeof(DpsMeterUi).GetField("_scopeIndex", Flags)!;
+        var awaiting = typeof(DpsMeterUi).GetField("_selfAwaitingLocal", Flags)!;
+        var build = typeof(DpsMeterUi).GetMethod("BuildDamageView", Flags)!;
+        var consume = typeof(DpsMeterUi).GetMethod("ConsumeImmediateRefreshRequest", Flags)!;
+        var oldIndex = selected.GetValue(null); var oldScope = scope.GetValue(null); var oldAwaiting = awaiting.GetValue(null);
+        var own = StageThreeChecks.Player();
+        var snapshot = new CombatStatsSnapshot(true, 10, 2, new[] { own, own with { PlayerNetId = 2, IsLocalPlayer = false } }, 4, 700);
+        var frozen = Json(snapshot);
+        try
+        {
+            selected.SetValue(null, 0); scope.SetValue(null, 0); awaiting.SetValue(null, false);
+            foreach (var preset in Enum.GetValues<HudLayoutPreset>())
+            {
+                var settings = Seed(); DpsHudPresets.Apply(settings, preset);
+                settings.MaxRows = 7; settings.ShowFieldPercentage = false;
+                var before = Json(settings);
+                for (var index = 0; index < 100; index++)
+                {
+                    build.Invoke(null, new object[] { settings, snapshot });
+                    DpsMeterUi.Refresh(); consume.Invoke(null, null);
+                }
+                Require(Json(settings) == before && Json(snapshot) == frozen, "真实视图/刷新请求不得重新套用预设或修改统计");
+            }
+            var current = new HudPlayerSelection();
+            current.Sync(snapshot, HudPlayerView.Self); current.SetScope(HudScope.Turn, snapshot.Players);
+            var multi = Seed(); DpsHudPresets.Apply(multi, HudLayoutPreset.Multiplayer);
+            current.Sync(snapshot, multi.MultiplayerDefaultView);
+            Require(current.View == HudPlayerView.Self && current.Scope == HudScope.Turn, "应用多人预设不改变当前战斗手选或时间范围");
+            current.Sync(snapshot with { CombatId = 701 }, multi.MultiplayerDefaultView);
+            Require(current.View == HudPlayerView.Team && current.Scope == HudScope.Team, "多人预设的新战斗默认全队须接入真实选择状态");
+            var solo = new HudPlayerSelection();
+            solo.Sync(snapshot with { Players = new[] { own } }, multi.MultiplayerDefaultView);
+            Require(solo.View == HudPlayerView.CurrentPlayer && solo.Scope != HudScope.Team, "单人应用多人预设也不得强制多人 UI 或全队范围");
+        }
+        finally
+        {
+            selected.SetValue(null, oldIndex); scope.SetValue(null, oldScope); awaiting.SetValue(null, oldAwaiting);
+        }
+        Console.WriteLine("通过：四预设实际视图各100次刷新不覆盖单项调整/统计，当前多人手选保留、新战斗全队及单人安全回退");
+    }
+}

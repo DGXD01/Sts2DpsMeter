@@ -164,6 +164,8 @@ public static class DpsMeterSettingsUi
         ClearChildren(_content!);
         var settings = DpsMeterSettings.Current;
 
+        AddLayoutPresets();
+
         AddSection(DpsLocalization.Get("显示与行为", "Display & Behavior"));
         AddToggle(DpsLocalization.Get("启动时显示 HUD", "Start with HUD visible"), settings.StartVisible, value =>
         {
@@ -400,6 +402,39 @@ public static class DpsMeterSettingsUi
 
         AddText(DpsLocalization.Get("配置文件", "Config File"), MutedColor);
         AddText(DpsMeterSettings.FilePath, MutedColor);
+    }
+
+    private static void AddLayoutPresets()
+    {
+        AddSection(DpsLocalization.Get("HUD 布局预设", "HUD Layout Presets"));
+        var grid = new GridContainer { Columns = 2, SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
+        grid.AddThemeConstantOverride("h_separation", 8);
+        grid.AddThemeConstantOverride("v_separation", 6);
+        foreach (var preset in new[] { HudLayoutPreset.Minimal, HudLayoutPreset.Default, HudLayoutPreset.Detailed, HudLayoutPreset.Multiplayer })
+        {
+            var button = new Button
+            {
+                Text = DpsHudPresets.Label(preset, DpsLocalization.IsChinese),
+                TooltipText = DpsHudPresets.Description(preset, DpsLocalization.IsChinese),
+                FocusMode = Control.FocusModeEnum.None,
+                CustomMinimumSize = new Vector2(0, 34),
+                SizeFlagsHorizontal = Control.SizeFlags.ExpandFill
+            };
+            button.AddThemeFontSizeOverride("font_size", DpsHudTypography.BodySize);
+            button.AddThemeColorOverride("font_color", BodyColor);
+            button.Pressed += () =>
+            {
+                if (!DpsHudPresets.Apply(DpsMeterSettings.Current, preset)) return;
+                SaveAndRefresh();
+                // 先处理原生按钮事件，再重建设置，避免在回调中移除当前按钮。
+                Callable.From(Refresh).CallDeferred();
+            };
+            grid.AddChild(button);
+        }
+        _content!.AddChild(grid);
+        AddText(DpsLocalization.Get(
+            "点击一次复制展示参数；之后仍可逐项修改并保存，不会被预设持续覆盖。悬停按钮可查看具体配置。位置、锁定、磁吸、透明度、低干扰及战斗总结保持原值。四套预设均按伤害降序；多人预设在单人不会强制多人显示，新战斗默认全队，其他预设默认当前玩家，当前战斗手选保持。",
+            "Click once to copy display settings; individual changes remain editable and saved without being overwritten. Hover a button for details. Position, lock, snapping, opacity, combat visibility and combat summary keep their values. All presets sort by damage. Multiplayer does not force multiplayer UI in solo; it defaults new multiplayer combats to Team, while other presets use Player. The current combat selection is preserved."), MutedColor);
     }
 
     private static void AddSection(string title)

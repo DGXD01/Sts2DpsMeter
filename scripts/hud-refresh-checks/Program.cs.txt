@@ -78,6 +78,7 @@ internal static class Program
         StageFourChecks.Run();
         StageFiveChecks.Run();
         StageSixChecks.Run();
+        StageSevenChecks.Run(args.FirstOrDefault());
         Console.WriteLine("HUD 刷新调度与布局边界检查全部通过；此结果不代表原生容器或游戏内交互已验收。");
     }
 
