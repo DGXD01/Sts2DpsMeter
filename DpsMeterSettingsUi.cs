@@ -364,6 +364,18 @@ public static class DpsMeterSettingsUi
             "默认关闭。战斗中鼠标离开 HUD 约 1 秒后淡化或折叠；淡出和移回恢复均约 0.18 秒渐变。打开设置、拖动或战斗结束也会恢复。淡化影响整个 HUD，不覆盖原面板透明度；自动折叠保留标题和按钮，不改变手动折叠状态。",
             "Off by default. During combat, leaving the HUD for about one second fades or collapses it. Fading out and restoring on hover both take about 0.18 seconds. Opening Settings, dragging, or ending combat also restores it. Fading affects the whole HUD without changing the saved panel opacity. Auto-collapse keeps the header and controls and preserves manual collapse."), MutedColor);
 
+        AddSection(DpsLocalization.Get("战斗结束", "Combat end"));
+        AddToggle(DpsLocalization.Get("显示战斗总结", "Show combat summary"), settings.ShowCombatSummary, value =>
+        {
+            settings.ShowCombatSummary = value;
+            SaveAndRefresh();
+        });
+        AddSliderRow(DpsLocalization.Get("总结持续时间（秒）", "Summary duration (seconds)"), settings.CombatSummaryDuration,
+            3, 15, 1, value => settings.CombatSummaryDuration = (float)value);
+        AddText(DpsLocalization.Get(
+            "默认显示 5 秒，可调 3–15 秒（含 3/5/8 秒），时长在下一次总结生效。单人显示本场数据，多人显示全队本场汇总；不受模块、摘要字段、范围或排序影响。总结不拦截鼠标，到时或进入下一场消失。关闭后立即取消且不重播；设置打开时暂时隐藏，计时继续。HUD 隐藏时不显示总结。",
+            "Shown for 5 seconds by default; adjustable from 3 to 15 seconds, including 3/5/8. Duration changes apply to the next summary. Single-player shows this combat; multiplayer shows team totals, independent of modules, title fields, scope or sorting. Mouse input passes through. It closes on timeout or the next combat. Disabling cancels it without replay. Settings temporarily hides it while the timer continues. A hidden HUD suppresses summaries."), MutedColor);
+
         AddSection(DpsLocalization.Get("操作", "Actions"));
         var resetAll = new Button
         {

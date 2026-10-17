@@ -16,6 +16,7 @@ $sourcePath = Join-Path $PSScriptRoot 'hud-refresh-checks\Program.cs.txt'
 $stageThreeSourcePath = Join-Path $PSScriptRoot 'hud-refresh-checks\StageThreeChecks.cs.txt'
 $stageFourSourcePath = Join-Path $PSScriptRoot 'hud-refresh-checks\StageFourChecks.cs.txt'
 $stageFiveSourcePath = Join-Path $PSScriptRoot 'hud-refresh-checks\StageFiveChecks.cs.txt'
+$stageSixSourcePath = Join-Path $PSScriptRoot 'hud-refresh-checks\StageSixChecks.cs.txt'
 New-Item -ItemType Directory -Path $workPath -Force | Out-Null
 
 function Escape-Xml([string]$Value) {
@@ -39,6 +40,7 @@ $project = @"
     <Compile Include="$(Escape-Xml $stageThreeSourcePath)" />
     <Compile Include="$(Escape-Xml $stageFourSourcePath)" />
     <Compile Include="$(Escape-Xml $stageFiveSourcePath)" />
+    <Compile Include="$(Escape-Xml $stageSixSourcePath)" />
     <Reference Include="Sts2DpsMeter"><HintPath>$(Escape-Xml $modPath)</HintPath></Reference>
     <Reference Include="GodotSharp"><HintPath>$(Escape-Xml $godotPath)</HintPath></Reference>
     <Reference Include="sts2"><HintPath>$(Escape-Xml (Join-Path $gameData 'sts2.dll'))</HintPath></Reference>

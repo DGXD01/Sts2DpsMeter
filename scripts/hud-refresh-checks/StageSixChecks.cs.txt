@@ -1,0 +1,164 @@
+using System;
+using System.Collections;
+using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using System.Threading.Tasks;
+using Sts2DpsMeter;
+
+internal static class StageSixChecks
+{
+    private const BindingFlags Flags = BindingFlags.Static | BindingFlags.NonPublic;
+    private static void Require(bool value, string message)
+    {
+        if (!value) throw new InvalidOperationException(message);
+    }
+    private static CombatStatsSnapshot Battle(long id = 100) => new(false, 10, 2,
+        new[] { StageThreeChecks.Player() }, 4, id);
+
+    public static void Run()
+    {
+        CheckFinalSnapshot();
+        CheckLifetime();
+        CheckDataAndText();
+        CheckConfiguration();
+    }
+
+    private static void CheckFinalSnapshot()
+    {
+        DpsStats.ResetRun();
+        Require(DpsStats.GetCombatSummaryStatus().Completed is null, "新对局不能有旧总结");
+        DpsStats.EndCombat();
+        Require(DpsStats.GetCombatSummaryStatus().Completed is null, "无活动战斗不能伪造总结");
+        DpsStats.BeginCombat();
+        var type = typeof(DpsStats).GetNestedType("PlayerAccumulator", BindingFlags.NonPublic)!;
+        var player = Activator.CreateInstance(type, new object[] { 8UL, "玩家" })!;
+        type.GetProperty("TotalDamage")!.SetValue(player, 100L);
+        type.GetProperty("MaxHit")!.SetValue(player, 25);
+        var players = (IDictionary)typeof(DpsStats).GetField("Players", Flags)!.GetValue(null)!;
+        players.Add(8UL, player);
+        DpsStats.Tick(5);
+        DpsStats.SetTurn(2);
+        DpsStats.EndCombat();
+        var status = DpsStats.GetCombatSummaryStatus();
+        var final = status.Completed!;
+        Require(!status.IsActive && !final.IsActive && final.CombatId == status.CombatId && final.ElapsedSeconds == 5 &&
+            final.CurrentTurn == 2 && final.Players.Single().TotalDamage == 100 && final.Players.Single().Dps == 20,
+            "真实 EndCombat 必须在清理前缓存最终统计和时间，不改变伤害口径");
+        type.GetProperty("TotalDamage")!.SetValue(player, 999L);
+        DpsStats.Tick(50);
+        Parallel.For(0, 1000, _ => DpsStats.EndCombat());
+        Require(ReferenceEquals(DpsStats.GetCombatSummaryStatus().Completed, final) && final.Players.Single().TotalDamage == 100 && final.ElapsedSeconds == 5,
+            "重复结束/计时/后续累计器变化不能改写或重建已结束快照");
+        DpsStats.BeginCombat();
+        Require(DpsStats.GetCombatSummaryStatus().Completed is null && final.Players.Single().MaxHit == 25 &&
+            DpsStats.GetSnapshot().Players.Count == 0, "下一场清除旧缓存但不能污染已生成快照或保留旧战斗统计");
+        DpsStats.EndCombat();
+        Require(DpsStats.GetCombatSummaryStatus().Completed!.Players.Count == 0, "空战斗缓存安全，展示层可以跳过");
+        DpsStats.ResetRun();
+        Require(DpsStats.GetCombatSummaryStatus().Completed is null, "重开对局必须清除结束缓存");
+        Console.WriteLine("通过：真实 EndCombat 最终快照、1000 次并发重复结束、累计器隔离、冻结计时及新战斗/新对局清理");
+    }
+
+    private static void CheckLifetime()
+    {
+        foreach (var seconds in new[] { 3, 5, 8, 15 })
+        foreach (var fps in new[] { 30, 60, 144 })
+        {
+            var state = new HudCombatSummaryState();
+            var final = Battle();
+            state.Update(100, false, final, true, seconds, 200);
+            Require(ReferenceEquals(state.Snapshot, final), "首次结束不把上一帧长耗时扣掉造成浮层一闪而过");
+            for (var frame = 1; frame < seconds * fps; frame++) state.Update(100, false, final, true, 99, 1d / fps);
+            Require(state.Snapshot is not null, "到设定时长之前总结须保持，不因轮询/设置时长变化重启或提前退出");
+            state.Update(100, false, final, true, seconds, 1d / fps);
+            Require(state.Snapshot is null, "3/5/8/15 秒须在不同帧率到时自动消失");
+            for (var frame = 0; frame < 1000; frame++) state.Update(100, false, final, true, seconds, 0.01);
+            Require(state.Snapshot is null, "轮询不得重播已自动关闭的总结");
+        }
+        var snapshot = Battle();
+        var pending = new HudCombatSummaryState();
+        void Update(bool enabled = true, double delta = 0) => pending.Update(100, false, snapshot, enabled, 5, delta);
+        Update(false); Update();
+        Require(pending.Snapshot is null, "关闭时结束的战斗，重新打开开关不能补播");
+        snapshot = Battle(101);
+        pending.Update(101, false, snapshot, true, 5, 0);
+        pending.Update(101, false, snapshot, false, 5, 0);
+        pending.Update(101, false, snapshot, true, 5, 0);
+        Require(pending.Snapshot is null, "关闭开关或隐藏 HUD 立即取消，不重播");
+        snapshot = Battle(102);
+        pending.Update(102, false, snapshot, true, 5, 0);
+        foreach (var delta in new[] { 0d, -1, double.NaN, double.PositiveInfinity }) pending.Update(102, false, snapshot, true, 5, delta);
+        Require(pending.Snapshot is not null, "无效帧不得破坏计时");
+        pending.Update(102, false, snapshot, true, 5, 100);
+        Require(pending.Snapshot is null, "长帧应正常到时关闭");
+        pending.Update(103, false, Battle(103), true, 5, 0);
+        pending.Dismiss();
+        pending.Update(103, false, Battle(103), true, 5, 0);
+        Require(pending.Snapshot is null, "节点退出/重建不重播旧总结");
+        pending.Update(104, false, Battle(104), true, 5, 0);
+        pending.Update(105, true, null, true, 5, 0);
+        Require(pending.Snapshot is null, "下一场第一帧立即清除总结");
+        pending.Update(105, false, Battle(104), true, 5, 0);
+        Require(pending.Snapshot is null, "过期战斗 ID 不得进入下一场");
+        pending.Update(106, false, Battle(106), true, 5, 0);
+        Require(pending.Snapshot?.CombatId == 106, "即使两次刷新间完成新战斗，也能消费新的结束缓存");
+        pending.Update(106, false, null, true, 5, 0);
+        Require(pending.Snapshot is null, "清空对局后旧总结不能残留");
+        pending.Update(107, false, Battle(107) with { Players = Array.Empty<PlayerStatsSnapshot>() }, true, 5, 0);
+        Require(pending.Snapshot is null, "空战斗不显示误导性总结");
+        Console.WriteLine("通过：总结 3/5/8/15 秒和 30/60/144 FPS、仅显示一次、禁用/隐藏/节点重建、长帧与连续战斗隔离");
+    }
+
+    private static void CheckDataAndText()
+    {
+        var player = StageThreeChecks.Player();
+        var strike = player.Sources[0] with { Source = "打击", Damage = 60 };
+        var bash = strike with { Source = "痛击", InternalId = "bash", Damage = 120 };
+        var first = player with { TotalDamage = 180, Sources = new[] { strike, bash }, MaxHit = 40, MaxHitSource = "痛击" };
+        var second = player with { PlayerNetId = 2, TotalDamage = 70, Sources = new[] { strike with { Damage = 70 } }, MaxHit = 25 };
+        var snapshot = Battle() with { Players = new[] { first, second } };
+        var data = DpsCombatSummary.Build(snapshot);
+        Require(data.IsTeam && data.Damage == 250 && data.Dps == 25 && data.TopSource == "打击" && data.TopSourceDamage == 130 && data.MaxHit == 40 && data.Turns == 2,
+            "全队总结应聚合相同来源、用共享战斗时间，最大单次取最大而非相加");
+        Require(DpsCombatSummary.Build(snapshot with { Players = new[] { second, first } }) == data, "玩家排序不能影响总结");
+        var zero = DpsCombatSummary.Build(snapshot with { ElapsedSeconds = 0, Players = new[] { player with { TotalDamage = 0, Sources = Array.Empty<SourceStatsSnapshot>(), MaxHit = 0 } } });
+        Require(!zero.IsTeam && zero.Damage == 0 && zero.Dps == 0 && zero.TopSource is null && zero.MaxHit == 0, "无伤害/零耗时不能出现 NaN、虚构来源或崩溃");
+        var huge = new string('长', 500) + "\r\n[b]来源[/b]";
+        foreach (var chinese in new[] { true, false })
+        {
+            var lines = DpsCombatSummary.Lines(data with { TopSource = huge }, chinese, value => value);
+            Require(lines.Length == 5 && lines.All(line => !line.Contains('\n') && !line.Contains('\r')) && lines[2].Length < 160,
+                "双语五项文本须限制长来源和换行，不让任意来源撑出浮层");
+            var literal = DpsCombatSummary.Lines(data with { TopSource = "[b]来源[/b]" }, chinese, value => value);
+            Require(literal[2].Contains("[b]来源[/b]"), "普通 Label 保留来源字面值，不解析玩家/Mod 来源的富文本");
+            Require(lines[0].Contains(chinese ? "全队" : "Team"), "多人汇总必须明确标注全队，不能伪装成自己");
+        }
+        Require(DpsCombatSummary.Build(snapshot) == data && snapshot.Players[0].TotalDamage == 180, "文本和状态不修改快照统计");
+        Console.WriteLine("通过：单人/全队完整伤害、共享 DPS、最高合并来源、最大单次、零值、双语及长来源安全文本");
+    }
+
+    private static void CheckConfiguration()
+    {
+        var normalize = typeof(DpsMeterSettings).GetMethod("Normalize", Flags)!;
+        var clone = typeof(DpsMeterSettings).GetMethod("Clone", Flags)!;
+        var options = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
+        foreach (var schema in new[] { 4, 5, 6, 7 })
+        {
+            var settings = JsonSerializer.Deserialize<DpsMeterSettingsData>("{\"schemaVersion\":" + schema + ",\"maxRows\":9,\"summaryDps\":true,\"multiplayerDefaultView\":2}", options)!;
+            normalize.Invoke(null, new object[] { settings });
+            Require(settings.SchemaVersion == 8 && settings.ShowCombatSummary && settings.CombatSummaryDuration == 5 && settings.MaxRows == 9 &&
+                settings.SummaryDps && settings.MultiplayerDefaultView == HudPlayerView.Team, "旧配置保留已有值，总结接入默认 5 秒");
+        }
+        foreach (var duration in new[] { 3f, 5, 8, 15, -1, 999, float.NaN, float.PositiveInfinity })
+        {
+            var settings = new DpsMeterSettingsData { ShowCombatSummary = false, CombatSummaryDuration = duration, LowInterferenceMode = HudLowInterferenceMode.Fade };
+            normalize.Invoke(null, new object[] { settings });
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(JsonSerializer.Serialize(clone.Invoke(null, new object[] { settings }), options), options)!;
+            Require(!restored.ShowCombatSummary && restored.CombatSummaryDuration == DpsCombatSummary.NormalizeDuration(duration) &&
+                restored.LowInterferenceMode == HudLowInterferenceMode.Fade && JsonSerializer.Serialize(settings, options) == JsonSerializer.Serialize(restored, options),
+                "总结开关/时长须真实 Clone/JSON 保存，非法时长归一化不破坏旧值");
+        }
+        Console.WriteLine("通过：Schema 4/5/6/7 升级、总结默认/禁用/时长边界、真实 Clone+JSON 和旧设置保留");
+    }
+}

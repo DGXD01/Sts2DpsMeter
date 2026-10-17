@@ -34,6 +34,7 @@ public static class DpsStats
     private static double _currentTurnElapsedSeconds;
     private static long _damageEventSequence;
     private static long _combatId;
+    private static CombatStatsSnapshot? _completedCombatSnapshot;
     private static int _currentTurn = 1;
 
     public static void ResetRun()
@@ -41,6 +42,7 @@ public static class DpsStats
         lock (SyncRoot)
         {
             Players.Clear();
+            _completedCombatSnapshot = null;
             PendingDoomKills.Clear();
             _active = false;
             _elapsedSeconds = 0;
@@ -60,6 +62,7 @@ public static class DpsStats
         lock (SyncRoot)
         {
             _combatId++;
+            _completedCombatSnapshot = null;
             Players.Clear();
             PendingDoomKills.Clear();
             _active = true;
@@ -89,9 +92,17 @@ public static class DpsStats
     {
         lock (SyncRoot)
         {
+            // 在任何结束清理之前冻结最终值；GetSnapshot 复用同一可重入锁，不接触 Godot。
+            if (_active) _completedCombatSnapshot = GetSnapshot() with { IsActive = false };
             PendingDoomKills.Clear();
             _active = false;
         }
+    }
+
+    internal static (long CombatId, bool IsActive, CombatStatsSnapshot? Completed) GetCombatSummaryStatus()
+    {
+        // 每帧只读已有缓存，避免为了浮层反复分配完整快照。
+        lock (SyncRoot) return (_combatId, _active, _completedCombatSnapshot);
     }
 
     public static void SetTurn(int roundNumber)

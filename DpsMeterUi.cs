@@ -89,6 +89,7 @@ public static partial class DpsMeterUi
                     refreshHost.ProcessFrame(delta);
                     UpdateHudOpacity(delta);
                     ProcessHeaderTooltip(delta);
+                    ProcessCombatSummary(delta);
                 }
                 // 本项目未使用 Godot 源码生成器，直接连接原生信号，避免依赖自定义 _Process 绑定。
                 tree!.ProcessFrame += OnProcessFrame;
@@ -96,6 +97,7 @@ public static partial class DpsMeterUi
                 {
                     tree.ProcessFrame -= OnProcessFrame;
                     HideHeaderTooltip();
+                    HideCombatSummary();
                     LowInterference.Reset();
                     OpacityTransition.Reset();
                     _dragging = false;
@@ -1067,6 +1069,7 @@ public static partial class DpsMeterUi
         _contentScroll.AddChild(_moduleGrid);
         BuildSnapPreview(canvas);
         BuildHeaderTooltip(canvas);
+        BuildCombatSummary(canvas);
     }
 
     private static Button CreateArrowButton(string text, Action pressed)
