@@ -49,7 +49,9 @@ public static partial class DpsMeterUi
             {
                 AutowrapMode = TextServer.AutowrapMode.WordSmart,
                 MaxLinesVisible = 2,
-                TextOverrunBehavior = TextServer.OverrunBehavior.TrimEllipsis,
+                // Godot 4.5 的自动换行 + 省略会返回 1px 最小高度，VBox 因而把整行压空。
+                // 保留最多两行，以自然文本高度参与排版；长来源仍由文本层限制长度。
+                TextOverrunBehavior = TextServer.OverrunBehavior.NoTrimming,
                 MouseFilter = Control.MouseFilterEnum.Ignore
             };
             label.AddThemeColorOverride("font_color", index == 0 ? TitleBlue : PrimaryText);
