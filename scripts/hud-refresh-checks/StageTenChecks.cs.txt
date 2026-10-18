@@ -1,0 +1,159 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Reflection.Emit;
+using System.Text.Json;
+using Godot;
+using Sts2DpsMeter;
+
+internal static class StageTenChecks
+{
+    private const BindingFlags Flags = BindingFlags.Static | BindingFlags.NonPublic;
+    private static readonly JsonSerializerOptions Options = (JsonSerializerOptions)typeof(DpsMeterSettings).GetField("JsonOptions", Flags)!.GetValue(null)!;
+    private static void Require(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
+    private static void Normalize(DpsMeterSettingsData value) => typeof(DpsMeterSettings).GetMethod("Normalize", Flags)!.Invoke(null, new object[] { value });
+    private static DpsMeterSettingsData Clone(DpsMeterSettingsData value) => (DpsMeterSettingsData)typeof(DpsMeterSettings).GetMethod("Clone", Flags)!.Invoke(null, new object[] { value })!;
+    private static string Json(object value) => JsonSerializer.Serialize(value, Options);
+
+    public static void Run(string? artifactDirectory)
+    {
+        var folder = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(artifactDirectory!))!, "设置整合检查");
+        Directory.CreateDirectory(folder);
+        CheckBindings(); CheckCompatibility(folder); CheckGeometry(folder);
+    }
+
+    private static void CheckBindings()
+    {
+        var expected = new Dictionary<string, string[]>
+        {
+            ["Hud"] = new[] { "StartVisible", "CompactMode", "PanelOpacity", "UiScale", "FontScale", "HudTheme", "LowInterferenceMode", "LowInterferenceOpacity", "SummaryDamage", "SummaryDps", "SummaryDpt", "SummaryTaken", "SummaryTurn", "SummaryHits" },
+            ["Position"] = new[] { "LockPosition", "SnapEnabled", "SnapDistance", "ScreenMargin", "PositionX", "PositionY", "SnapAnchor" },
+            ["Statistics"] = new[] { "ShowDealtBreakdown", "ShowTakenBreakdown", "ShowBlockGained", "ShowEnergySpent", "ShowEnergyGivenToAllies", "ShowBlockGivenToAllies", "ShowHealingGivenToAllies", "ShowCardsDrawnForAllies" },
+            ["Rows"] = new[] { "MaxRows", "SortMode", "ShowSourceIcons", "TooltipDetailMode", "EnableRowDetails", "ShowFieldName", "ShowFieldDamage", "ShowFieldPercentage", "ShowFieldHits", "ShowFieldMaxHit", "ShowFieldAverage" },
+            ["Multiplayer"] = new[] { "MultiplayerDefaultView" },
+            ["CombatEnd"] = new[] { "ShowCombatSummary", "CombatSummaryDuration" },
+            ["Presets"] = Array.Empty<string>()
+        };
+        var sections = DpsSettingsLayout.Sections;
+        Require(sections.SequenceEqual(Enum.GetValues<HudSettingsSection>()) && sections.Distinct().Count() == 7, "七组按计划顺序完整且唯一");
+        foreach (var chinese in new[] { false, true })
+            Require(sections.Select(s => DpsSettingsLayout.Label(s, chinese)).Distinct().Count() == 7, "中英文各组名称不能缺失或重复");
+        var ui = typeof(DpsMeterSettingsUi);
+        var methods = new[] { ui }.Concat(ui.GetNestedTypes(BindingFlags.NonPublic))
+            .SelectMany(t => t.GetMethods(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly)).ToArray();
+        var allBindings = new HashSet<string>();
+        foreach (var section in sections)
+        {
+            var name = "Add" + section + "Settings";
+            var targets = methods.Where(m => m.Name == name || m.Name.Contains("<" + name + ">"));
+            var bound = targets.SelectMany(ReadCalls).Where(m => m.DeclaringType == typeof(DpsMeterSettingsData) && (m.Name.StartsWith("get_") || m.Name.StartsWith("set_")))
+                .Select(m => m.Name[4..]).ToHashSet();
+            Require(bound.SetEquals(expected[section.ToString()]), "实际构建方法/回调属性绑定遗漏或跨组：" + section + ":" + string.Join(",", bound));
+            Require(!bound.Overlaps(allBindings), "同一永久设置不应在多个主组重复出现");
+            allBindings.UnionWith(bound);
+        }
+        var properties = typeof(DpsMeterSettingsData).GetProperties().Select(p => p.Name).Except(new[] { "SchemaVersion", "Columns" });
+        Require(allBindings.SetEquals(properties), "全部原可编辑字段/位置重置字段都应有归属；隐藏兼容字段Columns保留");
+        var render = ReadCalls(ui.GetMethod("RebuildContent", Flags)!).Select(m => m.Name).ToArray();
+        foreach (var section in sections)
+            Require(render.Count(n => n == "Add" + section + "Settings") == 1, "真实设置重建入口必须连接七个组");
+        Console.WriteLine("通过：七组双语顺序、真实构建方法及编译回调的" + allBindings.Count + "个设置属性归属无遗漏/跨组重复，隐藏兼容字段保留");
+    }
+
+    // 读取真实产品 IL 中的属性调用，避免只验证一份与 UI 脱离的字段清单。
+    private static IEnumerable<MethodBase> ReadCalls(MethodInfo method)
+    {
+        var code = method.GetMethodBody()?.GetILAsByteArray();
+        if (code is null) yield break;
+        var opcodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.FieldType == typeof(OpCode))
+            .Select(f => (OpCode)f.GetValue(null)!).ToDictionary(o => unchecked((ushort)o.Value));
+        for (var i = 0; i < code.Length;)
+        {
+            ushort key = code[i++];
+            if (key == 0xfe) key = (ushort)(0xfe00 | code[i++]);
+            var op = opcodes[key];
+            if (op.OperandType == OperandType.InlineMethod && method.Module.ResolveMethod(BitConverter.ToInt32(code, i)) is { } call) yield return call;
+            i += op.OperandType switch
+            {
+                OperandType.InlineNone => 0,
+                OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+                OperandType.InlineVar => 2,
+                OperandType.InlineI8 or OperandType.InlineR => 8,
+                OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(code, i),
+                _ => 4
+            };
+        }
+    }
+
+    private static void CheckCompatibility(string folder)
+    {
+        var cases = 0;
+        foreach (var schema in Enumerable.Range(0, 11))
+        foreach (var theme in Enum.GetValues<HudTheme>())
+        foreach (var font in DpsHudTypography.Scales)
+        {
+            var original = new DpsMeterSettingsData
+            {
+                SchemaVersion = schema, FontScale = font, HudTheme = theme, UiScale = 0.75f, PositionX = 231, PositionY = 87,
+                LockPosition = true, SnapAnchor = HudSnapAnchor.Bottom | HudSnapAnchor.Right, SnapDistance = 35, ScreenMargin = 22,
+                PanelOpacity = 0.57f, LowInterferenceMode = HudLowInterferenceMode.Fade, LowInterferenceOpacity = 0.27f,
+                ShowCombatSummary = false, CombatSummaryDuration = 8, MaxRows = 9, Columns = 1, SortMode = HudSortMode.Recent,
+                ShowSourceIcons = false, ShowFieldHits = true, ShowFieldMaxHit = true, ShowFieldAverage = true,
+                ShowEnergyGivenToAllies = true, ShowBlockGivenToAllies = true, ShowHealingGivenToAllies = true, ShowCardsDrawnForAllies = true,
+                MultiplayerDefaultView = HudPlayerView.Self, SummaryDamage = false, SummaryTaken = true, SummaryTurn = true, SummaryDpt = true
+            };
+            var raw = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(Json(original))!;
+            // 真实旧配置不具备后来引入的主题/文字字段，默认值必须安全且保留原UiScale。
+            if (schema < 10) raw.Remove("fontScale");
+            if (schema < 9) raw.Remove("hudTheme");
+            var loaded = JsonSerializer.Deserialize<DpsMeterSettingsData>(Json(raw), Options)!;
+            Normalize(loaded);
+            original.SchemaVersion = 10;
+            if (schema < 10) original.FontScale = 1;
+            if (schema < 9) original.HudTheme = HudTheme.DefaultDark;
+            Require(Json(loaded) == Json(original), "旧配置仅补缺失默认值，不能因设置分组更改其他字段：" + schema);
+            var file = Path.Combine(folder, $"schema-{schema}-theme-{(int)theme}-font-{font}.json");
+            File.WriteAllText(file, Json(Clone(loaded)));
+            var restored = JsonSerializer.Deserialize<DpsMeterSettingsData>(File.ReadAllText(file), Options)!;
+            Normalize(restored);
+            Require(Json(restored) == Json(original), "全部字段真实Clone/Normalize/JSON辅助文件往返必须保留");
+            cases++;
+        }
+        Console.WriteLine("通过：" + cases + "个Schema0–10/三主题/六文字档升级和全字段辅助文件往返；未写真实设置或调用游戏重启");
+    }
+
+    private static void CheckGeometry(string folder)
+    {
+        var screens = new[] { new Vector2(1280, 720), new(1920, 1080), new(2560, 1440), new(3840, 2160), new(800, 600), new(320, 240), new(1, 1) };
+        foreach (var screen in screens)
+        {
+            var bounds = DpsSettingsLayout.Calculate(screen);
+            Require(bounds.Position.X >= 0 && bounds.Position.Y >= 0 && bounds.Size.X > 0 && bounds.Size.Y > 0 &&
+                bounds.End.X <= screen.X + 0.01f && bounds.End.Y <= screen.Y + 0.01f, "设置逻辑边界不可推出视口");
+        }
+        Require(DpsSettingsLayout.Calculate(new Vector2(float.NaN, float.PositiveInfinity)) == DpsSettingsLayout.Calculate(new Vector2(1920, 1080)), "暂不可用视口采用安全默认边界");
+        foreach (var oldLimit in new[] { 0, 100, 900, 5000 })
+        foreach (var newLimit in new[] { 0, 50, 1400, 9000 })
+        foreach (var part in new[] { 0f, 0.2f, 0.5f, 1f })
+        {
+            var fraction = DpsSettingsLayout.ScrollFraction(oldLimit * part, oldLimit + 300, 300);
+            var restored = DpsSettingsLayout.RestoreScroll(fraction, newLimit + 100, 100);
+            Require(restored >= 0 && restored <= newLimit && (oldLimit == 0 || Math.Abs(restored - newLimit * part) <= 0.51), "主题/文字重建后滚动比例应安全恢复");
+        }
+        Require(DpsSettingsLayout.ScrollFraction(double.NaN, 1, 0) == 0 && DpsSettingsLayout.RestoreScroll(float.NaN, 1, 0) == 0 &&
+            DpsSettingsLayout.RestoreScroll(1, double.PositiveInfinity, 0) == 0, "非法滚动值安全回到起点");
+        var metrics = new
+        {
+            screens = screens.Take(4).Select(screen => new { width = screen.X, height = screen.Y, x = DpsSettingsLayout.Calculate(screen).Position.X,
+                y = DpsSettingsLayout.Calculate(screen).Position.Y, panelWidth = DpsSettingsLayout.Calculate(screen).Size.X, panelHeight = DpsSettingsLayout.Calculate(screen).Size.Y }),
+            fonts = DpsHudTypography.Scales.Select(font => new { scale = font, body = DpsHudTypography.Size(HudFontRole.Body, font),
+                note = DpsHudTypography.Size(HudFontRole.Note, font), title = DpsHudTypography.Size(HudFontRole.SettingsTitle, font), heading = DpsHudTypography.Size(HudFontRole.Header, font) }),
+            sections = DpsSettingsLayout.Sections.Select(section => new { id = section.ToString(), cn = DpsSettingsLayout.Label(section, true), en = DpsSettingsLayout.Label(section, false) }),
+            presets = Enum.GetValues<HudLayoutPreset>().Select(preset => new { cn = DpsHudPresets.Label(preset, true), en = DpsHudPresets.Label(preset, false) })
+        };
+        File.WriteAllText(Path.Combine(folder, "设置布局参数.json"), Json(metrics));
+        Console.WriteLine("通过：设置视口边界/非法视口回退、64次内容变高变低后的滚动恢复、非法滚动值；已导出真实布局和字体参数");
+    }
+}
